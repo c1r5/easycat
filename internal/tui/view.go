@@ -39,10 +39,10 @@ func (m *model) View() string {
 		leftPanels = append(leftPanels, m.panel("Devices", m.devices.View(), layout.leftWidth, layout.deviceHeight, m.focus == focusDevices))
 	}
 	if layout.appHeight > 0 {
-		leftPanels = append(leftPanels, m.panel("Apps", m.apps.View(), layout.leftWidth, layout.appHeight, m.focus == focusApps))
+		leftPanels = append(leftPanels, m.panel(m.appsTitle(), m.apps.View(), layout.leftWidth, layout.appHeight, m.focus == focusApps))
 	}
 	left := lipgloss.JoinVertical(lipgloss.Left, leftPanels...)
-	right := m.panel("Logcat", m.logs.View(), layout.rightWidth, layout.bodyHeight, m.focus == focusLogcat)
+	right := m.panel(m.logcatTitle(), m.logs.View(), layout.rightWidth, layout.bodyHeight, m.focus == focusLogcat)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	footer := m.footerView(layout.totalWidth, layout.footerHeight)
 	view := lipgloss.JoinVertical(lipgloss.Left, body, footer)
@@ -73,6 +73,20 @@ func (m *model) panel(title, content string, width, height int, active bool) str
 	return style.Width(styleWidth).Height(styleHeight).Render(titleLine + "\n" + body)
 }
 
+func (m *model) logcatTitle() string {
+	if m.selectedApp == nil || m.selectedApp.Name == "" {
+		return "Logcat"
+	}
+	return "Logcat | " + m.selectedApp.Name
+}
+
+func (m *model) appsTitle() string {
+	if m.appQuery == "" {
+		return "Apps"
+	}
+	return "Apps | " + m.appQuery
+}
+
 func (m *model) filtersView() string {
 	level := m.filters.Level
 	if level == "" {
@@ -91,11 +105,21 @@ func (m *model) filtersView() string {
 		pid = " " + mutedStyle.Render("pid "+m.filters.PID)
 	}
 	return strings.Join([]string{
-		"Package: " + pkg,
-		"Text: " + m.filter.View(),
-		"Level: " + level,
-		"PID only: " + pidOnly + pid,
+		m.filterRow(filterFieldPackage, "Package", pkg),
+		m.filterRow(filterFieldText, "Text", m.filter.View()),
+		m.filterRow(filterFieldLevel, "Level", level),
+		m.filterRow(filterFieldPIDOnly, "PID only", pidOnly+pid),
 	}, "\n")
+}
+
+func (m *model) filterRow(field filterField, label, value string) string {
+	cursor := "  "
+	style := lipgloss.NewStyle()
+	if m.focus == focusFilters && m.filterField == field {
+		cursor = "> "
+		style = compactSelectedItemStyle
+	}
+	return style.Render(cursor + label + ": " + value)
 }
 
 func (m *model) footerView(width, height int) string {

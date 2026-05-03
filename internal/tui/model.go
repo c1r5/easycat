@@ -24,22 +24,35 @@ const (
 	focusLogcat
 )
 
+type filterField int
+
+const (
+	filterFieldPackage filterField = iota
+	filterFieldText
+	filterFieldLevel
+	filterFieldPIDOnly
+	filterFieldCount
+)
+
 type model struct {
 	ctx    context.Context
 	client adb.Client
 
-	width  int
-	height int
-	focus  focus
+	width       int
+	height      int
+	focus       focus
+	filterField filterField
 
 	devices list.Model
 	apps    list.Model
 	logs    viewport.Model
 	filter  textinput.Model
 
-	filters domain.Filters
-	buffer  *domain.LogBuffer
-	stream  *adb.Stream
+	filters  domain.Filters
+	buffer   *domain.LogBuffer
+	stream   *adb.Stream
+	allApps  []domain.Package
+	appQuery string
 
 	selectedDevice *domain.Device
 	selectedApp    *domain.Package
@@ -72,15 +85,16 @@ func New(ctx context.Context, client adb.Client) tea.Model {
 	logs := viewport.New(0, 0)
 
 	return &model{
-		ctx:     ctx,
-		client:  client,
-		focus:   focusDevices,
-		devices: devices,
-		apps:    apps,
-		logs:    logs,
-		filter:  filter,
-		buffer:  domain.NewLogBuffer(domain.MaxLogLines),
-		status:  "loading devices...",
+		ctx:         ctx,
+		client:      client,
+		focus:       focusDevices,
+		filterField: filterFieldText,
+		devices:     devices,
+		apps:        apps,
+		logs:        logs,
+		filter:      filter,
+		buffer:      domain.NewLogBuffer(domain.MaxLogLines),
+		status:      "loading devices...",
 	}
 }
 
@@ -185,8 +199,21 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/":
 		m.focus = focusFilters
+		m.filterField = filterFieldText
 		m.filter.Focus()
 		return m, textinput.Blink
+	}
+
+	if m.focus == focusFilters {
+		return m.updateFiltersKey(msg)
+	}
+	if m.focus == focusApps {
+		if handled, cmd := m.updateAppFilterKey(msg); handled {
+			return m, cmd
+		}
+	}
+
+	switch msg.String() {
 	case "r":
 		m.status = "refreshing devices..."
 		m.loadingDevice = true
@@ -238,6 +265,35 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m *model) updateFiltersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.filterField = (m.filterField + filterFieldCount - 1) % filterFieldCount
+	case "down", "j":
+		m.filterField = (m.filterField + 1) % filterFieldCount
+	case "enter":
+		if m.filterField == filterFieldText {
+			m.filter.Focus()
+			return m, textinput.Blink
+		}
+		m.toggleSelectedFilter()
+	case "left", "right", " ":
+		m.toggleSelectedFilter()
+	}
+	return m, nil
+}
+
+func (m *model) toggleSelectedFilter() {
+	switch m.filterField {
+	case filterFieldLevel:
+		m.filters.Level = nextLevel(m.filters.Level)
+		m.refreshLogContent(false)
+	case filterFieldPIDOnly:
+		m.filters.PIDOnly = !m.filters.PIDOnly
+		m.refreshLogContent(false)
+	}
+}
+
 func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case focusDevices:
@@ -249,6 +305,8 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.selectedApp = nil
 		m.filters.Package = ""
 		m.filters.PID = ""
+		m.allApps = nil
+		m.appQuery = ""
 		m.apps.SetItems(nil)
 		m.stopStream()
 		m.buffer.Clear()
@@ -286,11 +344,56 @@ func (m *model) setDeviceItems(devices []domain.Device) {
 }
 
 func (m *model) setAppItems(packages []domain.Package) {
-	items := make([]list.Item, len(packages))
-	for i, pkg := range packages {
+	m.allApps = packages
+	m.appQuery = ""
+	m.applyAppFilter()
+}
+
+func (m *model) updateAppFilterKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyRunes:
+		m.appQuery += string(msg.Runes)
+		m.applyAppFilter()
+		return true, nil
+	case tea.KeyBackspace, tea.KeyCtrlH:
+		if m.appQuery == "" {
+			return false, nil
+		}
+		runes := []rune(m.appQuery)
+		m.appQuery = string(runes[:len(runes)-1])
+		m.applyAppFilter()
+		return true, nil
+	case tea.KeyEsc:
+		if m.appQuery == "" {
+			return false, nil
+		}
+		m.appQuery = ""
+		m.applyAppFilter()
+		return true, nil
+	}
+	return false, nil
+}
+
+func (m *model) applyAppFilter() {
+	query := strings.ToLower(strings.TrimSpace(m.appQuery))
+	filtered := make([]domain.Package, 0, len(m.allApps))
+	for _, pkg := range m.allApps {
+		if query == "" || strings.Contains(strings.ToLower(pkg.Name), query) {
+			filtered = append(filtered, pkg)
+		}
+	}
+
+	items := make([]list.Item, len(filtered))
+	for i, pkg := range filtered {
 		items[i] = pkg
 	}
 	m.apps.SetItems(items)
+	m.apps.Select(0)
+	if query == "" {
+		m.status = fmt.Sprintf("%d app(s)", len(m.allApps))
+		return
+	}
+	m.status = fmt.Sprintf("%d/%d app(s) match %q", len(filtered), len(m.allApps), m.appQuery)
 }
 
 func (m *model) stopStream() {

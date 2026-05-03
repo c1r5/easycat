@@ -81,10 +81,12 @@ cargo install cargo-watch
 | Key | Action |
 | --- | --- |
 | `tab` / `shift+tab` | Change focused panel |
-| `enter` | Select device or app |
-| `/` | Focus text filter |
-| `esc` | Leave text filter |
-| `up` / `down` | Move selection or scroll |
+| `enter` | Select device/app or edit the selected filter field |
+| `/` | Focus the text filter directly |
+| `esc` | Leave text filter or clear the app search |
+| `up` / `down` | Move selection, scroll, or choose a filter field |
+| type while Apps is focused | Filter apps incrementally |
+| `backspace` while Apps is focused | Remove one character from the app search |
 | `pgup` / `pgdown` | Scroll logcat |
 | `g` / `G` | Go to top / bottom |
 | `l` | Cycle log level filter |
