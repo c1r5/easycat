@@ -24,6 +24,14 @@ Check ADB:
 adb devices -l
 ```
 
+Install with Go:
+
+```sh
+go install github.com/c1r5/easycat@latest
+```
+
+Make sure `$(go env GOPATH)/bin` is available in your `PATH`.
+
 Install dependencies:
 
 ```sh
@@ -47,7 +55,7 @@ bin/easycat
 Run from source:
 
 ```sh
-go run ./cmd/easycat
+go run .
 ```
 
 Run the built binary:
@@ -89,4 +97,3 @@ cargo install cargo-watch
 ## Demo
 
 ![easycat demo](./docs/demo.gif)
-

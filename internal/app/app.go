@@ -1,9 +1,7 @@
-package main
+package app
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -11,16 +9,11 @@ import (
 	"github.com/c1r5/easycat/internal/tui"
 )
 
-func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+func Run(ctx context.Context) error {
 	program := tea.NewProgram(
 		tui.New(ctx, adb.NewClient()),
 		tea.WithAltScreen(),
 	)
-	if _, err := program.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	_, err := program.Run()
+	return err
 }

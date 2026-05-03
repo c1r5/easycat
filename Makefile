@@ -1,5 +1,5 @@
 APP := easycat
-CMD := ./cmd/easycat
+CMD := .
 BIN_DIR := bin
 BIN := $(BIN_DIR)/$(APP)
 
