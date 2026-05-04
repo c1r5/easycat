@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/c1r5/easycat/internal/adb"
 	"github.com/c1r5/easycat/internal/domain"
@@ -317,6 +318,7 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		}
 		m.status = "loading apps..."
 		m.loadingApps = true
+		m.focus = focusApps
 		return m, m.loadAppsCmd(item.Serial)
 	case focusApps:
 		item, ok := m.apps.SelectedItem().(domain.Package)
@@ -407,7 +409,7 @@ func (m *model) refreshLogContent(follow bool) {
 	lines := m.buffer.Filtered(m.filters)
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
-		rendered = append(rendered, renderLogLine(line))
+		rendered = append(rendered, renderLogLineWrapped(line, m.logs.Width)...)
 	}
 	if len(rendered) == 0 {
 		rendered = append(rendered, mutedStyle.Render("no logs"))
@@ -446,6 +448,18 @@ func renderLogLine(line domain.LogLine) string {
 		prefix = line.Raw
 	}
 	return levelStyle(level).Render(prefix)
+}
+
+func renderLogLineWrapped(line domain.LogLine, width int) []string {
+	rendered := renderLogLine(line)
+	if width <= 0 {
+		return []string{rendered}
+	}
+	wrapped := ansi.Wrap(rendered, width, "")
+	if wrapped == "" {
+		return []string{""}
+	}
+	return strings.Split(wrapped, "\n")
 }
 
 func levelStyle(level string) lipgloss.Style {

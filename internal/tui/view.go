@@ -107,8 +107,8 @@ func (m *model) filtersView() string {
 	return strings.Join([]string{
 		m.filterRow(filterFieldPackage, "Package", pkg),
 		m.filterRow(filterFieldText, "Text", m.filter.View()),
-		m.filterRow(filterFieldLevel, "Level", level),
-		m.filterRow(filterFieldPIDOnly, "PID only", pidOnly+pid),
+		m.filterRow(filterFieldLevel, "Level", m.levelValue(level)),
+		m.filterRow(filterFieldPIDOnly, "PID only", m.toggleValue(pidOnly, m.filters.PIDOnly)+pid),
 	}, "\n")
 }
 
@@ -130,7 +130,17 @@ func (m *model) footerView(width, height int) string {
 	if m.paused {
 		state = "paused"
 	}
-	help := "tab: focus | enter: select | /: filter | l: level | o: pid | r: refresh | c: clear | p: pause | q: quit"
+	help := strings.Join([]string{
+		"tab: focus",
+		"enter: select",
+		"/: filter",
+		m.levelShortcut(),
+		m.pidShortcut(),
+		"r: refresh",
+		"c: clear",
+		m.pauseShortcut(),
+		"q: quit",
+	}, " | ")
 	status := fmt.Sprintf("%s | %s | %s", time.Now().Format("15:04:05"), state, m.status)
 	content := lipgloss.JoinVertical(lipgloss.Left, help, statusStyle.Render(status))
 	styleWidth, styleHeight := panelStyleSize(inactiveStyle, width, height)
@@ -138,6 +148,45 @@ func (m *model) footerView(width, height int) string {
 	return inactiveStyle.Width(styleWidth).Height(styleHeight).Render(
 		fitBlock(content, contentWidth, contentHeight),
 	)
+}
+
+func (m *model) levelValue(value string) string {
+	if m.filters.Level == "" {
+		return mutedStyle.Render(value)
+	}
+	return levelStyle(m.filters.Level).Bold(true).Render(value)
+}
+
+func (m *model) toggleValue(value string, on bool) string {
+	if on {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render(value)
+	}
+	return mutedStyle.Render(value)
+}
+
+func (m *model) levelShortcut() string {
+	label := "l: level"
+	if m.filters.Level != "" {
+		label += "=" + m.filters.Level
+		return levelStyle(m.filters.Level).Bold(true).Render(label)
+	}
+	return mutedStyle.Render(label + "=all")
+}
+
+func (m *model) pidShortcut() string {
+	label := "o: pid"
+	if m.filters.PIDOnly {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render(label + "=on")
+	}
+	return mutedStyle.Render(label + "=off")
+}
+
+func (m *model) pauseShortcut() string {
+	label := "p: pause"
+	if m.paused {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(label + "=on")
+	}
+	return mutedStyle.Render(label + "=off")
 }
 
 type layoutSize struct {
