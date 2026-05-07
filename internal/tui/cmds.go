@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -20,17 +21,21 @@ type appsLoadedMsg struct {
 }
 
 type streamStartedMsg struct {
-	stream *adb.Stream
-	pid    string
-	err    error
+	stream   *adb.Stream
+	streamID int
+	pid      string
+	err      error
 }
 
-type logLineMsg struct {
-	line domain.LogLine
+type logBatchMsg struct {
+	stream   *adb.Stream
+	streamID int
+	lines    []domain.LogLine
 }
 
 type streamDoneMsg struct {
-	err error
+	streamID int
+	err      error
 }
 
 func (m *model) loadDevicesCmd() tea.Cmd {
@@ -47,17 +52,17 @@ func (m *model) loadAppsCmd(serial string) tea.Cmd {
 	}
 }
 
-func (m *model) startStreamCmd(serial, packageName string) tea.Cmd {
+func (m *model) startStreamCmd(serial, packageName string, streamID int) tea.Cmd {
 	return func() tea.Msg {
 		pidCtx, cancel := context.WithTimeout(m.ctx, adbPIDTimeout)
 		defer cancel()
 		pid, _ := m.client.PIDOf(pidCtx, serial, packageName)
 		stream, err := m.client.StartLogcat(m.ctx, serial)
-		return streamStartedMsg{stream: stream, pid: pid, err: err}
+		return streamStartedMsg{stream: stream, streamID: streamID, pid: pid, err: err}
 	}
 }
 
-func waitLogLineCmd(stream *adb.Stream) tea.Cmd {
+func waitLogBatchCmd(stream *adb.Stream, streamID int) tea.Cmd {
 	return func() tea.Msg {
 		if stream == nil {
 			return nil
@@ -66,19 +71,41 @@ func waitLogLineCmd(stream *adb.Stream) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return logLineMsg{line: line}
+
+		lines := []domain.LogLine{line}
+		timer := time.NewTimer(logBatchWindow)
+		defer timer.Stop()
+
+		// Logcat can emit large bursts. Sending one Bubble Tea message per line
+		// makes the whole model rebuild the viewport content for every line and
+		// can starve regular key/layout updates. This mirrors lazydocker's
+		// "tainted view + periodic redraw" principle while staying in Bubble Tea:
+		// wait for one line, gather the short burst around it, then repaint once.
+		for len(lines) < logBatchMaxLines {
+			select {
+			case line, ok := <-stream.Lines:
+				if !ok {
+					return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
+				}
+				lines = append(lines, line)
+			case <-timer.C:
+				return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
+			}
+		}
+
+		return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
 	}
 }
 
-func waitStreamDoneCmd(stream *adb.Stream) tea.Cmd {
+func waitStreamDoneCmd(stream *adb.Stream, streamID int) tea.Cmd {
 	return func() tea.Msg {
 		if stream == nil {
 			return nil
 		}
 		err, ok := <-stream.Done
 		if !ok {
-			return streamDoneMsg{}
+			return streamDoneMsg{streamID: streamID}
 		}
-		return streamDoneMsg{err: err}
+		return streamDoneMsg{streamID: streamID, err: err}
 	}
 }

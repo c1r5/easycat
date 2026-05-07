@@ -52,6 +52,7 @@ type model struct {
 	filters  domain.Filters
 	buffer   *domain.LogBuffer
 	stream   *adb.Stream
+	streamID int
 	allApps  []domain.Package
 	appQuery string
 
@@ -135,6 +136,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setAppItems(msg.apps)
 		return m, nil
 	case streamStartedMsg:
+		if msg.streamID != m.streamID {
+			if msg.stream != nil {
+				msg.stream.Stop()
+			}
+			return m, nil
+		}
 		if msg.err != nil {
 			m.status = "logcat failed: " + msg.err.Error()
 			return m, nil
@@ -146,14 +153,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.pid == "" {
 			m.status = "streaming from " + m.client.LogcatWindow() + " without pid"
 		}
-		return m, tea.Batch(waitLogLineCmd(msg.stream), waitStreamDoneCmd(msg.stream))
-	case logLineMsg:
-		m.buffer.Add(msg.line)
+		return m, tea.Batch(waitLogBatchCmd(msg.stream, msg.streamID), waitStreamDoneCmd(msg.stream, msg.streamID))
+	case logBatchMsg:
+		if msg.streamID != m.streamID || msg.stream != m.stream {
+			return m, nil
+		}
+		for _, line := range msg.lines {
+			m.buffer.Add(line)
+		}
 		if !m.paused {
 			m.refreshLogContent(true)
 		}
-		return m, waitLogLineCmd(m.stream)
+		return m, waitLogBatchCmd(m.stream, m.streamID)
 	case streamDoneMsg:
+		if msg.streamID != m.streamID {
+			return m, nil
+		}
+		m.stream = nil
 		if msg.err != nil {
 			m.status = "stream stopped: " + msg.err.Error()
 		}
@@ -332,7 +348,8 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.buffer.Clear()
 		m.refreshLogContent(false)
 		m.status = "starting logcat..."
-		return m, m.startStreamCmd(m.selectedDevice.Serial, item.Name)
+		streamID := m.beginStream()
+		return m, m.startStreamCmd(m.selectedDevice.Serial, item.Name, streamID)
 	}
 	return m, nil
 }
@@ -399,10 +416,24 @@ func (m *model) applyAppFilter() {
 }
 
 func (m *model) stopStream() {
+	// ADB cancellation is asynchronous: a command that was already waiting on a
+	// line or on process completion can still deliver one final Bubble Tea
+	// message after Stop returns. Bumping the stream ID makes those late
+	// messages harmless instead of letting an old logcat session repaint the
+	// active UI or overwrite the footer status.
+	m.streamID++
 	if m.stream != nil {
 		m.stream.Stop()
 		m.stream = nil
 	}
+}
+
+func (m *model) beginStream() int {
+	// Each start request gets its own identity before the adb command runs.
+	// This also protects against a slow PID/logcat startup from an old app
+	// selection racing with a newer selection.
+	m.streamID++
+	return m.streamID
 }
 
 func (m *model) refreshLogContent(follow bool) {
@@ -441,13 +472,40 @@ func renderLogLine(line domain.LogLine) string {
 	}
 	level := line.Level
 	if level == "" {
-		return mutedStyle.Render(line.Raw)
+		return mutedStyle.Render(sanitizeTerminalText(line.Raw))
 	}
-	prefix := strings.TrimSpace(strings.Join([]string{line.Timestamp, level, line.Tag + ":", line.Message}, " "))
+	prefix := strings.TrimSpace(strings.Join([]string{
+		sanitizeTerminalText(line.Timestamp),
+		sanitizeTerminalText(level),
+		sanitizeTerminalText(line.Tag) + ":",
+		sanitizeTerminalText(line.Message),
+	}, " "))
 	if prefix == "" {
-		prefix = line.Raw
+		prefix = sanitizeTerminalText(line.Raw)
 	}
 	return levelStyle(level).Render(prefix)
+}
+
+func sanitizeTerminalText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r':
+			b.WriteRune(' ')
+		case r == '\t':
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f:
+			// Logcat is external input. Control bytes such as ESC, BEL and BS
+			// are data here, not terminal commands; dropping them prevents a log
+			// line from moving the cursor, clearing cells, or visually escaping
+			// the viewport/footer containers.
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func renderLogLineWrapped(line domain.LogLine, width int) []string {
