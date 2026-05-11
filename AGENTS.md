@@ -1,6 +1,39 @@
-# CODEX
+# Repository Guidelines
 
-## PROJECT MAP
+## Project Structure & Module Organization
+
+`easycat` is a Go terminal UI for Android `logcat` debugging. The entry point is [main.go](/home/dev/Dev/github.com/c1r5/easycat/main.go), which delegates to `internal/app`. Core packages live under `internal/`: `adb` wraps ADB commands and streaming, `domain` contains devices, packages, log parsing, filters, and buffers, and `tui` contains the Bubble Tea model, commands, views, and delegates. Tests sit beside implementation files as `*_test.go`. User documentation and demo assets live in `README.md` and `docs/`.
+
+## Build, Test, and Development Commands
+
+- `make deps`: runs `go mod tidy` and downloads modules.
+- `make build`: builds `bin/easycat` from the repository root command.
+- `make test`: runs `go test ./...` across all packages.
+- `go run .`: runs the TUI from source.
+- `make dev`: runs `go run .` under `cargo watch`; install it with `cargo install cargo-watch` first.
+- `make clean`: removes the generated `bin/` directory.
+
+ADB must be available in `PATH`; verify with `adb devices -l` before testing device-dependent behavior.
+
+## Coding Style & Naming Conventions
+
+Follow standard Go formatting: run `gofmt` on changed `.go` files and keep imports organized by `go fmt`/`goimports` conventions. Use tabs for Go indentation. Keep package names short and lowercase (`adb`, `tui`, `domain`). Export only API needed across packages; prefer unexported helpers inside `internal/tui` unless another package needs them. Test names should use descriptive `TestBehaviorCondition` style, as in `TestLogBatchIgnoresStaleStream`.
+
+## Testing Guidelines
+
+Use the standard `testing` package. Keep tests package-local and focused on parsing, filtering, model transitions, rendering, and ADB command behavior. Add or update tests when changing log parsing, filter semantics, stream lifecycle handling, or viewport rendering. Run `make test` before submitting changes. There is no fixed coverage threshold, but behavior changes should include regression coverage.
+
+## Commit & Pull Request Guidelines
+
+Recent history uses concise conventional-style commits such as `feat(tui): add app filtering and filter navigation`, `perf(tui): batch log lines and sanitize output`, and `refactor: move main package to project root`. Prefer `type(scope): summary` when a scope is clear.
+
+Pull requests should include a short problem/solution summary, tests run, and any manual ADB/device checks. Include screenshots or terminal recordings for visible TUI changes, especially layout, focus, filtering, or wrapping updates. Link related issues when available and call out follow-up work explicitly.
+
+## Agent-Specific Instructions
+
+Do not assume a connected Android device is available in automated checks. Avoid overwriting unrelated work in the tree, including generated binaries and documentation drafts.
+
+## MAP
 
 ### Root
 

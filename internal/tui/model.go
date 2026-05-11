@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/c1r5/easycat/internal/adb"
 	"github.com/c1r5/easycat/internal/domain"
+	localmcp "github.com/c1r5/easycat/internal/mcp"
+	"github.com/c1r5/easycat/internal/observer"
+	"github.com/c1r5/easycat/internal/rules"
 )
 
 type focus int
@@ -53,6 +57,8 @@ type model struct {
 	buffer   *domain.LogBuffer
 	stream   *adb.Stream
 	streamID int
+	observer *observer.Observer
+	mcp      *localmcp.Server
 	allApps  []domain.Package
 	appQuery string
 
@@ -63,6 +69,8 @@ type model struct {
 	loadingDevice bool
 	loadingApps   bool
 	status        string
+	mcpEnabled    bool
+	mcpStatus     string
 }
 
 func New(ctx context.Context, client adb.Client) tea.Model {
@@ -85,6 +93,19 @@ func New(ctx context.Context, client adb.Client) tea.Model {
 	filter.Prompt = ""
 
 	logs := viewport.New(0, 0)
+	loadedRules, rulesErr := rules.Load(".easycat/rules.yaml")
+	obs, obsErr := observer.New(observer.Options{Rules: loadedRules})
+	status := "loading devices..."
+	if rulesErr != nil {
+		status = "rules failed: " + rulesErr.Error()
+	}
+	if obsErr != nil {
+		status = "observer failed: " + obsErr.Error()
+	}
+	var mcpServer *localmcp.Server
+	if obs != nil {
+		mcpServer = localmcp.NewServer(localmcp.DefaultAddr, obs)
+	}
 
 	return &model{
 		ctx:         ctx,
@@ -96,12 +117,16 @@ func New(ctx context.Context, client adb.Client) tea.Model {
 		logs:        logs,
 		filter:      filter,
 		buffer:      domain.NewLogBuffer(domain.MaxLogLines),
-		status:      "loading devices...",
+		observer:    obs,
+		mcp:         mcpServer,
+		mcpEnabled:  true,
+		mcpStatus:   "starting",
+		status:      status,
 	}
 }
 
 func (m *model) Init() tea.Cmd {
-	return m.loadDevicesCmd()
+	return tea.Batch(m.loadDevicesCmd(), m.startMCPCmd(), waitObserverEventCmd(m.ctx, m.observer))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -149,6 +174,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream = msg.stream
 		m.filters.PID = msg.pid
 		m.filters.PIDOnly = msg.pid != ""
+		if m.observer != nil {
+			m.observer.Reset(observer.Context{
+				Device:  selectedDeviceValue(m.selectedDevice),
+				Package: selectedPackageName(m.selectedApp),
+				PID:     msg.pid,
+			})
+			m.observer.Start(m.ctx)
+		}
 		m.status = "streaming from " + m.client.LogcatWindow()
 		if msg.pid == "" {
 			m.status = "streaming from " + m.client.LogcatWindow() + " without pid"
@@ -160,6 +193,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for _, line := range msg.lines {
 			m.buffer.Add(line)
+			if m.observer != nil {
+				m.observer.Publish(line)
+			}
 		}
 		if !m.paused {
 			m.refreshLogContent(true)
@@ -173,6 +209,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status = "stream stopped: " + msg.err.Error()
 		}
+		return m, nil
+	case observerEventMsg:
+		if msg.event.Err != nil {
+			m.status = "incident failed: " + msg.event.Err.Error()
+		} else if msg.event.Incident.RuleID != "" {
+			m.status = "[incident] " + msg.event.Incident.RuleID + " created"
+		}
+		return m, waitObserverEventCmd(m.ctx, m.observer)
+	case mcpStartedMsg:
+		if msg.err != nil {
+			m.mcpStatus = "error"
+			m.status = "mcp failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.mcpStatus = "on " + localmcp.DefaultAddr
+		return m, nil
+	case mcpStoppedMsg:
+		if msg.err != nil {
+			m.status = "mcp stop failed: " + msg.err.Error()
+		}
+		m.mcpStatus = "off"
 		return m, nil
 	}
 
@@ -207,7 +264,15 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.stopStream()
-		return m, tea.Quit
+		return m, tea.Batch(m.stopMCPCmd(), tea.Quit)
+	case "m":
+		m.mcpEnabled = !m.mcpEnabled
+		if m.mcpEnabled {
+			m.mcpStatus = "starting"
+			return m, m.startMCPCmd()
+		}
+		m.mcpStatus = "stopping"
+		return m, m.stopMCPCmd()
 	case "tab":
 		m.focus = (m.focus + 1) % 4
 		return m, nil
@@ -426,6 +491,9 @@ func (m *model) stopStream() {
 		m.stream.Stop()
 		m.stream = nil
 	}
+	if m.observer != nil {
+		m.observer.Stop()
+	}
 }
 
 func (m *model) beginStream() int {
@@ -464,6 +532,40 @@ func nextLevel(level string) string {
 	default:
 		return ""
 	}
+}
+
+func (m *model) startMCPCmd() tea.Cmd {
+	return func() tea.Msg {
+		if !m.mcpEnabled || m.mcp == nil {
+			return nil
+		}
+		return mcpStartedMsg{err: m.mcp.Start()}
+	}
+}
+
+func (m *model) stopMCPCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.mcp == nil {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return mcpStoppedMsg{err: m.mcp.Stop(ctx)}
+	}
+}
+
+func selectedDeviceValue(device *domain.Device) domain.Device {
+	if device == nil {
+		return domain.Device{}
+	}
+	return *device
+}
+
+func selectedPackageName(pkg *domain.Package) string {
+	if pkg == nil {
+		return ""
+	}
+	return pkg.Name
 }
 
 func renderLogLine(line domain.LogLine) string {

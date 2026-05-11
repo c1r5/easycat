@@ -8,6 +8,7 @@ import (
 
 	"github.com/c1r5/easycat/internal/adb"
 	"github.com/c1r5/easycat/internal/domain"
+	"github.com/c1r5/easycat/internal/observer"
 )
 
 type devicesLoadedMsg struct {
@@ -36,6 +37,18 @@ type logBatchMsg struct {
 type streamDoneMsg struct {
 	streamID int
 	err      error
+}
+
+type observerEventMsg struct {
+	event observer.Event
+}
+
+type mcpStartedMsg struct {
+	err error
+}
+
+type mcpStoppedMsg struct {
+	err error
 }
 
 func (m *model) loadDevicesCmd() tea.Cmd {
@@ -107,5 +120,19 @@ func waitStreamDoneCmd(stream *adb.Stream, streamID int) tea.Cmd {
 			return streamDoneMsg{streamID: streamID}
 		}
 		return streamDoneMsg{streamID: streamID, err: err}
+	}
+}
+
+func waitObserverEventCmd(ctx context.Context, obs *observer.Observer) tea.Cmd {
+	return func() tea.Msg {
+		if obs == nil {
+			return nil
+		}
+		select {
+		case event := <-obs.Events():
+			return observerEventMsg{event: event}
+		case <-ctx.Done():
+			return nil
+		}
 	}
 }
