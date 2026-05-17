@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/c1r5/easycat/internal/adb"
 	"github.com/c1r5/easycat/internal/domain"
@@ -86,6 +87,30 @@ func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
 	}
 	if view := m.logs.View(); !strings.Contains(view, "old") || strings.Contains(view, "new") {
 		t.Fatalf("expected paused viewport to keep previous content, got %q", view)
+	}
+}
+
+func TestActionShortcutsRequireCtrl(t *testing.T) {
+	m := New(context.Background(), adb.NewClient()).(*model)
+	m.buffer.Add(domain.LogLine{Raw: "keep"})
+	m.mcpEnabled = true
+
+	updated, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(*model)
+	if got := m.buffer.Lines(); len(got) != 1 || got[0].Raw != "keep" {
+		t.Fatalf("plain c cleared logs, got %+v", got)
+	}
+
+	updated, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = updated.(*model)
+	if !m.mcpEnabled {
+		t.Fatal("plain m toggled MCP")
+	}
+
+	updated, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlK})
+	m = updated.(*model)
+	if got := m.buffer.Lines(); len(got) != 0 {
+		t.Fatalf("ctrl+k did not clear logs, got %+v", got)
 	}
 }
 

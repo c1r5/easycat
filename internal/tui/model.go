@@ -262,10 +262,10 @@ func (m *model) updateFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "ctrl+q", "ctrl+c":
 		m.stopStream()
 		return m, tea.Batch(m.stopMCPCmd(), tea.Quit)
-	case "m":
+	case "ctrl+s":
 		m.mcpEnabled = !m.mcpEnabled
 		if m.mcpEnabled {
 			m.mcpStatus = "starting"
@@ -296,15 +296,15 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "r":
+	case "ctrl+r":
 		m.status = "refreshing devices..."
 		m.loadingDevice = true
 		return m, m.loadDevicesCmd()
-	case "c":
+	case "ctrl+k":
 		m.buffer.Clear()
 		m.refreshLogContent(false)
 		return m, nil
-	case "p":
+	case "ctrl+p":
 		m.paused = !m.paused
 		if m.paused {
 			m.status = "paused"
@@ -313,11 +313,11 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshLogContent(true)
 		}
 		return m, nil
-	case "l":
+	case "ctrl+l":
 		m.filters.Level = nextLevel(m.filters.Level)
 		m.refreshLogContent(false)
 		return m, nil
-	case "o":
+	case "ctrl+o":
 		m.filters.PIDOnly = !m.filters.PIDOnly
 		m.refreshLogContent(false)
 		return m, nil

@@ -32,6 +32,7 @@ Pull requests should include a short problem/solution summary, tests run, and an
 ## Agent-Specific Instructions
 
 Do not assume a connected Android device is available in automated checks. Avoid overwriting unrelated work in the tree, including generated binaries and documentation drafts.
+When a requested change requires user-facing documentation updates, update `README.md` in the same change so usage, shortcuts, and behavior stay accurate.
 
 ## MAP
 

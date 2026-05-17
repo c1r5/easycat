@@ -132,7 +132,7 @@ The MCP server starts enabled by default inside the TUI:
 127.0.0.1:8765/mcp
 ```
 
-Use `m` to toggle MCP on or off. The server is read-only and exposes:
+Use `ctrl+s` to toggle MCP on or off. The server is read-only and exposes:
 
 - `get_active_context`
 - `get_recent_logs`
@@ -157,13 +157,13 @@ in the footer/status line.
 | `backspace` while Apps is focused | Remove one character from the app search |
 | `pgup` / `pgdown` | Scroll logcat |
 | `g` / `G` | Go to top / bottom while Logcat is focused |
-| `l` | Cycle log level filter: all, `E`, `W`, `I`, `D` |
-| `o` | Toggle selected app PID-only filtering |
-| `m` | Toggle the embedded MCP server |
-| `r` | Refresh devices |
-| `c` | Clear logs |
-| `p` | Pause / resume rendering |
-| `q` | Quit |
+| `ctrl+l` | Cycle log level filter: all, `E`, `W`, `I`, `D` |
+| `ctrl+o` | Toggle selected app PID-only filtering |
+| `ctrl+s` | Toggle the embedded MCP server |
+| `ctrl+r` | Refresh devices |
+| `ctrl+k` | Clear logs |
+| `ctrl+p` | Pause / resume rendering |
+| `ctrl+q` / `ctrl+c` | Quit |
 
 ## Demo
 

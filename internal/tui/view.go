@@ -138,10 +138,10 @@ func (m *model) footerView(width, height int) string {
 		m.levelShortcut(),
 		m.pidShortcut(),
 		m.mcpShortcut(),
-		"r: refresh",
-		"c: clear",
+		"ctrl+r: refresh",
+		"ctrl+k: clear",
 		m.pauseShortcut(),
-		"q: quit",
+		"ctrl+q: quit",
 	}, " | ")
 	status := fmt.Sprintf("%s | %s | %s", time.Now().Format("15:04:05"), state, m.status)
 	if m.mcpStatus != "" {
@@ -170,7 +170,7 @@ func (m *model) toggleValue(value string, on bool) string {
 }
 
 func (m *model) levelShortcut() string {
-	label := "l: level"
+	label := "ctrl+l: level"
 	if m.filters.Level != "" {
 		label += "=" + m.filters.Level
 		return levelStyle(m.filters.Level).Bold(true).Render(label)
@@ -179,7 +179,7 @@ func (m *model) levelShortcut() string {
 }
 
 func (m *model) pidShortcut() string {
-	label := "o: pid"
+	label := "ctrl+o: pid"
 	if m.filters.PIDOnly {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render(label + "=on")
 	}
@@ -187,7 +187,7 @@ func (m *model) pidShortcut() string {
 }
 
 func (m *model) pauseShortcut() string {
-	label := "p: pause"
+	label := "ctrl+p: pause"
 	if m.paused {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(label + "=on")
 	}
@@ -195,7 +195,7 @@ func (m *model) pauseShortcut() string {
 }
 
 func (m *model) mcpShortcut() string {
-	label := "m: mcp"
+	label := "ctrl+s: mcp"
 	if m.mcpEnabled {
 		return enabledStyle.Render(label + "=on")
 	}
