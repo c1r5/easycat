@@ -70,8 +70,9 @@ Run the built binary:
 ./bin/easycat
 ```
 
-When a device and app are selected, `easycat` starts streaming logcat, observes
-incoming lines asynchronously, and writes detected incidents to:
+When a device and app are selected, `easycat` starts streaming logcat and
+captures only lines from the resolved app PID. It observes captured lines
+asynchronously and writes detected incidents to:
 
 ```sh
 .easycat/incidents/
@@ -142,6 +143,10 @@ Use `ctrl+s` to toggle MCP on or off. The server is read-only and exposes:
 If the port is already in use, the TUI keeps running and reports the MCP error
 in the footer/status line.
 
+Turning `PID only` off suspends capture and clears recent logs from both the
+TUI and MCP. Previously created incidents remain available for the session.
+If the selected app PID cannot be resolved, no logs are captured.
+
 ## Shortcuts
 
 | Key | Action |
@@ -158,7 +163,7 @@ in the footer/status line.
 | `pgup` / `pgdown` | Scroll logcat |
 | `g` / `G` | Go to top / bottom while Logcat is focused |
 | `ctrl+l` | Cycle log level filter: all, `E`, `W`, `I`, `D` |
-| `ctrl+o` | Toggle selected app PID-only filtering |
+| `ctrl+o` | Toggle selected app PID-only capture; turning it off clears recent logs |
 | `ctrl+s` | Toggle the embedded MCP server |
 | `ctrl+r` | Refresh devices |
 | `ctrl+k` | Clear logs |
