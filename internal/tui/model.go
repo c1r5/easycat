@@ -174,14 +174,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream = msg.stream
 		m.filters.PID = msg.pid
 		m.filters.PIDOnly = msg.pid != ""
-		if m.observer != nil {
-			m.observer.Reset(observer.Context{
-				Device:  selectedDeviceValue(m.selectedDevice),
-				Package: selectedPackageName(m.selectedApp),
-				PID:     msg.pid,
-			})
-			m.observer.Start(m.ctx)
-		}
+		m.resetCaptureState(m.filters.PIDOnly)
 		m.status = "streaming from " + m.client.LogcatWindow()
 		if msg.pid == "" {
 			m.status = "streaming from " + m.client.LogcatWindow() + " without pid"
@@ -191,13 +184,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.streamID != m.streamID || msg.stream != m.stream {
 			return m, nil
 		}
+		captured := false
 		for _, line := range msg.lines {
+			if !m.shouldCapture(line) {
+				continue
+			}
 			m.buffer.Add(line)
+			captured = true
 			if m.observer != nil {
 				m.observer.Publish(line)
 			}
 		}
-		if !m.paused {
+		if captured && !m.paused {
 			m.refreshLogContent(true)
 		}
 		return m, waitLogBatchCmd(m.stream, m.streamID)
@@ -318,8 +316,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshLogContent(false)
 		return m, nil
 	case "ctrl+o":
-		m.filters.PIDOnly = !m.filters.PIDOnly
-		m.refreshLogContent(false)
+		m.setPIDOnly(!m.filters.PIDOnly)
 		return m, nil
 	case "enter":
 		return m.selectFocused()
@@ -371,8 +368,7 @@ func (m *model) toggleSelectedFilter() {
 		m.filters.Level = nextLevel(m.filters.Level)
 		m.refreshLogContent(false)
 	case filterFieldPIDOnly:
-		m.filters.PIDOnly = !m.filters.PIDOnly
-		m.refreshLogContent(false)
+		m.setPIDOnly(!m.filters.PIDOnly)
 	}
 }
 
@@ -387,12 +383,12 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.selectedApp = nil
 		m.filters.Package = ""
 		m.filters.PID = ""
+		m.filters.PIDOnly = false
 		m.allApps = nil
 		m.appQuery = ""
 		m.apps.SetItems(nil)
 		m.stopStream()
-		m.buffer.Clear()
-		m.refreshLogContent(false)
+		m.resetCaptureState(false)
 		if item.State != "device" {
 			m.status = item.Serial + " is " + item.State
 			return m, nil
@@ -409,9 +405,9 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.selectedApp = &item
 		m.filters.Package = item.Name
 		m.filters.PID = ""
+		m.filters.PIDOnly = false
 		m.stopStream()
-		m.buffer.Clear()
-		m.refreshLogContent(false)
+		m.resetCaptureState(false)
 		m.status = "starting logcat..."
 		streamID := m.beginStream()
 		return m, m.startStreamCmd(m.selectedDevice.Serial, item.Name, streamID)
@@ -502,6 +498,35 @@ func (m *model) beginStream() int {
 	// selection racing with a newer selection.
 	m.streamID++
 	return m.streamID
+}
+
+func (m *model) shouldCapture(line domain.LogLine) bool {
+	return m.selectedDevice != nil &&
+		m.selectedApp != nil &&
+		m.filters.PIDOnly &&
+		m.filters.PID != "" &&
+		line.PID == m.filters.PID
+}
+
+func (m *model) setPIDOnly(enabled bool) {
+	m.filters.PIDOnly = enabled
+	m.resetCaptureState(enabled && m.stream != nil && m.filters.PID != "")
+}
+
+func (m *model) resetCaptureState(startObserver bool) {
+	m.buffer.Clear()
+	if m.observer != nil {
+		m.observer.Stop()
+		m.observer.Reset(observer.Context{
+			Device:  selectedDeviceValue(m.selectedDevice),
+			Package: selectedPackageName(m.selectedApp),
+			PID:     m.filters.PID,
+		})
+		if startObserver {
+			m.observer.Start(m.ctx)
+		}
+	}
+	m.refreshLogContent(false)
 }
 
 func (m *model) refreshLogContent(follow bool) {
