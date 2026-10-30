@@ -38,7 +38,7 @@ When a requested change requires user-facing documentation updates, update `READ
 
 ### Root
 
-- `main.go`: application entrypoint. Creates a root `context.Context` and calls `internal/app.Run`.
+- `main.go`: application entrypoint. With no arguments, opens the TUI through `internal/app.Run`. With arguments, runs `internal/cli`.
 - `Makefile`: common development commands.
   - `make deps`: tidy and download Go modules.
   - `make build`: builds `bin/easycat`.
@@ -65,6 +65,10 @@ When a requested change requires user-facing documentation updates, update `READ
 - `internal/core/bus.go`: subscription bus. A full queue drops the new event.
 - `internal/core/filter.go`: text, level, and PID matching, plus the log buffer.
 - `internal/core/parse_test.go` and `internal/core/bus_test.go`: parser, filter, buffer, and bus tests.
+
+### `internal/cli`
+
+- `internal/cli/cli.go`: `devices`, `apps`, and `logs` for agents. `logs` subscribes to the same bus as the TUI.
 
 ### `internal/tui`
 

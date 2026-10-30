@@ -85,6 +85,20 @@ cargo install cargo-watch
 
 If the selected app PID cannot be resolved, no logs are captured. The device list refreshes every 5 seconds. When that app gets a PID after it was closed, or the PID changes, logcat reloads.
 
+## Commands
+
+With no arguments, `easycat` opens the TUI. The same actions are available as commands:
+
+```sh
+easycat devices
+easycat devices info --serial SERIAL
+easycat apps --serial SERIAL --query TEXT
+easycat apps info --serial SERIAL --package NAME
+easycat logs --serial SERIAL --package NAME --level E --text TEXT --pid-only
+```
+
+`devices` prints `serial`, `state`, and `model` separated by tabs. `apps --query` keeps package names that contain the text, without caring about case. `logs` follows logcat until the process is interrupted. `--pid-only` defaults to on, so the output is the PID resolved when the command starts. `--level` accepts `E`, `W`, `I`, and `D`.
+
 ## Shortcuts
 
 | Key | Action |
