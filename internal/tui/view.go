@@ -22,7 +22,6 @@ var (
 	titleStyle     = lipgloss.NewStyle().Bold(true)
 	mutedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	enabledStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 )
 
 func (m *model) View() string {
@@ -137,16 +136,12 @@ func (m *model) footerView(width, height int) string {
 		"/: filter",
 		m.levelShortcut(),
 		m.pidShortcut(),
-		m.mcpShortcut(),
 		"ctrl+r: refresh",
 		"ctrl+k: clear",
 		m.pauseShortcut(),
 		"ctrl+q: quit",
 	}, " | ")
 	status := fmt.Sprintf("%s | %s | %s", time.Now().Format("15:04:05"), state, m.status)
-	if m.mcpStatus != "" {
-		status = fmt.Sprintf("%s | mcp %s", status, m.mcpStatus)
-	}
 	content := lipgloss.JoinVertical(lipgloss.Left, help, statusStyle.Render(status))
 	styleWidth, styleHeight := panelStyleSize(inactiveStyle, width, height)
 	contentWidth, contentHeight := panelContentSize(inactiveStyle, width, height)
@@ -190,14 +185,6 @@ func (m *model) pauseShortcut() string {
 	label := "ctrl+p: pause"
 	if m.paused {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(label + "=on")
-	}
-	return mutedStyle.Render(label + "=off")
-}
-
-func (m *model) mcpShortcut() string {
-	label := "ctrl+s: mcp"
-	if m.mcpEnabled {
-		return enabledStyle.Render(label + "=on")
 	}
 	return mutedStyle.Render(label + "=off")
 }

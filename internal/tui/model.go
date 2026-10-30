@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -14,10 +13,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/c1r5/easycat/internal/adb"
+	"github.com/c1r5/easycat/internal/core"
 	"github.com/c1r5/easycat/internal/domain"
-	localmcp "github.com/c1r5/easycat/internal/mcp"
-	"github.com/c1r5/easycat/internal/observer"
-	"github.com/c1r5/easycat/internal/rules"
 )
 
 type focus int
@@ -53,14 +50,16 @@ type model struct {
 	logs    viewport.Model
 	filter  textinput.Model
 
-	filters  domain.Filters
-	buffer   *domain.LogBuffer
-	stream   *adb.Stream
-	streamID int
-	observer *observer.Observer
-	mcp      *localmcp.Server
-	allApps  []domain.Package
-	appQuery string
+	filters     domain.Filters
+	buffer      *domain.LogBuffer
+	stream      *adb.Stream
+	streamID    int
+	bus         *core.Bus
+	events      <-chan core.Event
+	cancelSub   func()
+	watchingBus bool
+	allApps     []domain.Package
+	appQuery    string
 
 	selectedDevice *domain.Device
 	selectedApp    *domain.Package
@@ -69,8 +68,6 @@ type model struct {
 	loadingDevice bool
 	loadingApps   bool
 	status        string
-	mcpEnabled    bool
-	mcpStatus     string
 }
 
 func New(ctx context.Context, client adb.Client) tea.Model {
@@ -93,19 +90,6 @@ func New(ctx context.Context, client adb.Client) tea.Model {
 	filter.Prompt = ""
 
 	logs := viewport.New(0, 0)
-	loadedRules, rulesErr := rules.Load(".easycat/rules.yaml")
-	obs, obsErr := observer.New(observer.Options{Rules: loadedRules})
-	status := "loading devices..."
-	if rulesErr != nil {
-		status = "rules failed: " + rulesErr.Error()
-	}
-	if obsErr != nil {
-		status = "observer failed: " + obsErr.Error()
-	}
-	var mcpServer *localmcp.Server
-	if obs != nil {
-		mcpServer = localmcp.NewServer(localmcp.DefaultAddr, obs)
-	}
 
 	return &model{
 		ctx:         ctx,
@@ -117,16 +101,18 @@ func New(ctx context.Context, client adb.Client) tea.Model {
 		logs:        logs,
 		filter:      filter,
 		buffer:      domain.NewLogBuffer(domain.MaxLogLines),
-		observer:    obs,
-		mcp:         mcpServer,
-		mcpEnabled:  true,
-		mcpStatus:   "starting",
-		status:      status,
+		bus:         core.NewBus(core.DefaultQueueSize),
+		status:      "loading devices...",
 	}
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.loadDevicesCmd(), m.startMCPCmd(), waitObserverEventCmd(m.ctx, m.observer))
+	if m.bus != nil && m.events == nil {
+		sub := m.bus.Subscribe()
+		m.events = sub.Events
+		m.cancelSub = sub.Cancel
+	}
+	return m.loadDevicesCmd()
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -174,60 +160,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream = msg.stream
 		m.filters.PID = msg.pid
 		m.filters.PIDOnly = msg.pid != ""
-		m.resetCaptureState(m.filters.PIDOnly)
+		m.resetCaptureState()
 		m.status = "streaming from " + m.client.LogcatWindow()
 		if msg.pid == "" {
 			m.status = "streaming from " + m.client.LogcatWindow() + " without pid"
 		}
-		return m, tea.Batch(waitLogBatchCmd(msg.stream, msg.streamID), waitStreamDoneCmd(msg.stream, msg.streamID))
+		return m, m.ensureBusWait()
 	case logBatchMsg:
-		if msg.streamID != m.streamID || msg.stream != m.stream {
-			return m, nil
+		m.capture(msg.streamID, msg.lines)
+		return m, nil
+	case busReadMsg:
+		if msg.hasLines {
+			m.capture(msg.streamID, msg.lines)
 		}
-		captured := false
-		for _, line := range msg.lines {
-			if !m.shouldCapture(line) {
-				continue
-			}
-			m.buffer.Add(line)
-			captured = true
-			if m.observer != nil {
-				m.observer.Publish(line)
-			}
+		if msg.hasFollow {
+			m.applyBusEvent(msg.follow)
 		}
-		if captured && !m.paused {
-			m.refreshLogContent(true)
-		}
-		return m, waitLogBatchCmd(m.stream, m.streamID)
+		return m, m.waitBusCmd()
 	case streamDoneMsg:
-		if msg.streamID != m.streamID {
-			return m, nil
-		}
-		m.stream = nil
-		if msg.err != nil {
-			m.status = "stream stopped: " + msg.err.Error()
-		}
-		return m, nil
-	case observerEventMsg:
-		if msg.event.Err != nil {
-			m.status = "incident failed: " + msg.event.Err.Error()
-		} else if msg.event.Incident.RuleID != "" {
-			m.status = "[incident] " + msg.event.Incident.RuleID + " created"
-		}
-		return m, waitObserverEventCmd(m.ctx, m.observer)
-	case mcpStartedMsg:
-		if msg.err != nil {
-			m.mcpStatus = "error"
-			m.status = "mcp failed: " + msg.err.Error()
-			return m, nil
-		}
-		m.mcpStatus = "on " + localmcp.DefaultAddr
-		return m, nil
-	case mcpStoppedMsg:
-		if msg.err != nil {
-			m.status = "mcp stop failed: " + msg.err.Error()
-		}
-		m.mcpStatus = "off"
+		m.finishStream(msg.streamID, msg.err)
 		return m, nil
 	}
 
@@ -262,15 +213,10 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+q", "ctrl+c":
 		m.stopStream()
-		return m, tea.Batch(m.stopMCPCmd(), tea.Quit)
-	case "ctrl+s":
-		m.mcpEnabled = !m.mcpEnabled
-		if m.mcpEnabled {
-			m.mcpStatus = "starting"
-			return m, m.startMCPCmd()
+		if m.cancelSub != nil {
+			m.cancelSub()
 		}
-		m.mcpStatus = "stopping"
-		return m, m.stopMCPCmd()
+		return m, tea.Quit
 	case "tab":
 		m.focus = (m.focus + 1) % 4
 		return m, nil
@@ -388,7 +334,7 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.appQuery = ""
 		m.apps.SetItems(nil)
 		m.stopStream()
-		m.resetCaptureState(false)
+		m.resetCaptureState()
 		if item.State != "device" {
 			m.status = item.Serial + " is " + item.State
 			return m, nil
@@ -407,7 +353,7 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.filters.PID = ""
 		m.filters.PIDOnly = false
 		m.stopStream()
-		m.resetCaptureState(false)
+		m.resetCaptureState()
 		m.status = "starting logcat..."
 		streamID := m.beginStream()
 		return m, m.startStreamCmd(m.selectedDevice.Serial, item.Name, streamID)
@@ -487,9 +433,6 @@ func (m *model) stopStream() {
 		m.stream.Stop()
 		m.stream = nil
 	}
-	if m.observer != nil {
-		m.observer.Stop()
-	}
 }
 
 func (m *model) beginStream() int {
@@ -510,23 +453,56 @@ func (m *model) shouldCapture(line domain.LogLine) bool {
 
 func (m *model) setPIDOnly(enabled bool) {
 	m.filters.PIDOnly = enabled
-	m.resetCaptureState(enabled && m.stream != nil && m.filters.PID != "")
+	m.resetCaptureState()
 }
 
-func (m *model) resetCaptureState(startObserver bool) {
+func (m *model) resetCaptureState() {
 	m.buffer.Clear()
-	if m.observer != nil {
-		m.observer.Stop()
-		m.observer.Reset(observer.Context{
-			Device:  selectedDeviceValue(m.selectedDevice),
-			Package: selectedPackageName(m.selectedApp),
-			PID:     m.filters.PID,
-		})
-		if startObserver {
-			m.observer.Start(m.ctx)
-		}
-	}
 	m.refreshLogContent(false)
+}
+
+func (m *model) ensureBusWait() tea.Cmd {
+	if m.watchingBus || m.events == nil {
+		return nil
+	}
+	m.watchingBus = true
+	return m.waitBusCmd()
+}
+
+func (m *model) capture(streamID int, lines []domain.LogLine) {
+	if streamID != m.streamID || m.stream == nil {
+		return
+	}
+	captured := false
+	for _, line := range lines {
+		if !m.shouldCapture(line) {
+			continue
+		}
+		m.buffer.Add(line)
+		captured = true
+	}
+	if captured && !m.paused {
+		m.refreshLogContent(true)
+	}
+}
+
+func (m *model) applyBusEvent(event core.Event) {
+	switch event.Kind {
+	case core.KindLog:
+		m.capture(event.StreamID, []domain.LogLine{event.Line})
+	case core.KindStreamStopped:
+		m.finishStream(event.StreamID, event.Err)
+	}
+}
+
+func (m *model) finishStream(streamID int, err error) {
+	if streamID != m.streamID {
+		return
+	}
+	m.stream = nil
+	if err != nil {
+		m.status = "stream stopped: " + err.Error()
+	}
 }
 
 func (m *model) refreshLogContent(follow bool) {
@@ -557,40 +533,6 @@ func nextLevel(level string) string {
 	default:
 		return ""
 	}
-}
-
-func (m *model) startMCPCmd() tea.Cmd {
-	return func() tea.Msg {
-		if !m.mcpEnabled || m.mcp == nil {
-			return nil
-		}
-		return mcpStartedMsg{err: m.mcp.Start()}
-	}
-}
-
-func (m *model) stopMCPCmd() tea.Cmd {
-	return func() tea.Msg {
-		if m.mcp == nil {
-			return nil
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		return mcpStoppedMsg{err: m.mcp.Stop(ctx)}
-	}
-}
-
-func selectedDeviceValue(device *domain.Device) domain.Device {
-	if device == nil {
-		return domain.Device{}
-	}
-	return *device
-}
-
-func selectedPackageName(pkg *domain.Package) string {
-	if pkg == nil {
-		return ""
-	}
-	return pkg.Name
 }
 
 func renderLogLine(line domain.LogLine) string {

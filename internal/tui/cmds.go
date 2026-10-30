@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/c1r5/easycat/internal/adb"
+	"github.com/c1r5/easycat/internal/core"
 	"github.com/c1r5/easycat/internal/domain"
-	"github.com/c1r5/easycat/internal/observer"
 )
 
 type devicesLoadedMsg struct {
@@ -39,16 +39,12 @@ type streamDoneMsg struct {
 	err      error
 }
 
-type observerEventMsg struct {
-	event observer.Event
-}
-
-type mcpStartedMsg struct {
-	err error
-}
-
-type mcpStoppedMsg struct {
-	err error
+type busReadMsg struct {
+	lines     []domain.LogLine
+	streamID  int
+	hasLines  bool
+	hasFollow bool
+	follow    core.Event
 }
 
 func (m *model) loadDevicesCmd() tea.Cmd {
@@ -70,69 +66,54 @@ func (m *model) startStreamCmd(serial, packageName string, streamID int) tea.Cmd
 		pidCtx, cancel := context.WithTimeout(m.ctx, adbPIDTimeout)
 		defer cancel()
 		pid, _ := m.client.PIDOf(pidCtx, serial, packageName)
-		stream, err := m.client.StartLogcat(m.ctx, serial)
+		stream, err := m.client.StartLogcat(m.ctx, serial, m.bus, streamID)
 		return streamStartedMsg{stream: stream, streamID: streamID, pid: pid, err: err}
 	}
 }
 
-func waitLogBatchCmd(stream *adb.Stream, streamID int) tea.Cmd {
+func (m *model) waitBusCmd() tea.Cmd {
+	events := m.events
 	return func() tea.Msg {
-		if stream == nil {
+		if events == nil {
 			return nil
 		}
-		line, ok := <-stream.Lines
+		ev, ok := <-events
 		if !ok {
 			return nil
 		}
+		if ev.Kind != core.KindLog {
+			return busReadMsg{hasFollow: true, follow: ev}
+		}
 
-		lines := []domain.LogLine{line}
+		lines := []domain.LogLine{ev.Line}
 		timer := time.NewTimer(logBatchWindow)
 		defer timer.Stop()
 
 		// Logcat can emit large bursts. Sending one Bubble Tea message per line
 		// makes the whole model rebuild the viewport content for every line and
-		// can starve regular key/layout updates. This mirrors lazydocker's
-		// "tainted view + periodic redraw" principle while staying in Bubble Tea:
-		// wait for one line, gather the short burst around it, then repaint once.
+		// can starve regular key/layout updates. Wait for one line, gather the
+		// short burst around it, then repaint once.
 		for len(lines) < logBatchMaxLines {
 			select {
-			case line, ok := <-stream.Lines:
+			case next, ok := <-events:
 				if !ok {
-					return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
+					return busReadMsg{lines: lines, streamID: ev.StreamID, hasLines: true}
 				}
-				lines = append(lines, line)
+				if next.Kind == core.KindLog && next.StreamID == ev.StreamID {
+					lines = append(lines, next.Line)
+					continue
+				}
+				return busReadMsg{
+					lines:     lines,
+					streamID:  ev.StreamID,
+					hasLines:  true,
+					hasFollow: true,
+					follow:    next,
+				}
 			case <-timer.C:
-				return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
+				return busReadMsg{lines: lines, streamID: ev.StreamID, hasLines: true}
 			}
 		}
-
-		return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
-	}
-}
-
-func waitStreamDoneCmd(stream *adb.Stream, streamID int) tea.Cmd {
-	return func() tea.Msg {
-		if stream == nil {
-			return nil
-		}
-		err, ok := <-stream.Done
-		if !ok {
-			return streamDoneMsg{streamID: streamID}
-		}
-		return streamDoneMsg{streamID: streamID, err: err}
-	}
-}
-
-func waitObserverEventCmd(ctx context.Context, obs *observer.Observer) tea.Cmd {
-	return func() tea.Msg {
-		if obs == nil {
-			return nil
-		}
-		select {
-		case event := <-obs.Events():
-			return observerEventMsg{event: event}
-		case <-ctx.Done():
-			return nil
-		}
+		return busReadMsg{lines: lines, streamID: ev.StreamID, hasLines: true}
 	}
 }
