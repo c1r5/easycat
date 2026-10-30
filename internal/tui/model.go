@@ -215,6 +215,8 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cancelSub()
 		}
 		return m, tea.Quit
+	case "ctrl+r":
+		return m.reloadLogs()
 	case "tab":
 		m.focus = (m.focus + 1) % 4
 		return m, nil
@@ -238,10 +240,12 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "ctrl+r":
-		m.status = "refreshing devices..."
-		m.loadingDevice = true
-		return m, m.loadDevicesCmd()
+	case "r":
+		if m.focus == focusDevices {
+			m.status = "refreshing devices..."
+			m.loadingDevice = true
+			return m, m.loadDevicesCmd()
+		}
 	case "ctrl+k":
 		m.buffer.Clear()
 		m.refreshLogContent(false)
@@ -418,6 +422,20 @@ func (m *model) applyAppFilter() {
 		return
 	}
 	m.status = fmt.Sprintf("%d/%d app(s) match %q", len(filtered), len(m.allApps), m.appQuery)
+}
+
+func (m *model) reloadLogs() (tea.Model, tea.Cmd) {
+	if m.selectedDevice == nil || m.selectedApp == nil || m.selectedDevice.State != "device" {
+		m.status = "no log stream to reload"
+		return m, nil
+	}
+	serial := m.selectedDevice.Serial
+	name := m.selectedApp.Name
+	m.stopStream()
+	m.buffer.Clear()
+	m.refreshLogContent(false)
+	m.status = "reloading logcat..."
+	return m, m.startStreamCmd(serial, name, m.beginStream())
 }
 
 func (m *model) stopStream() {

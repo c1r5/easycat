@@ -317,3 +317,49 @@ exit 1
 		t.Fatal("stream remained after logcat exited")
 	}
 }
+
+func TestDeviceRefreshAndLogReload(t *testing.T) {
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.focus = focusDevices
+	updated, cmd := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(*model)
+	if !m.loadingDevice || cmd == nil {
+		t.Fatalf("devices r: loading=%v cmd=%v", m.loadingDevice, cmd != nil)
+	}
+
+	m.focus = focusApps
+	m.loadingDevice = false
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(*model)
+	if m.loadingDevice || m.appQuery != "r" || cmd != nil {
+		t.Fatalf("apps r: loading=%v query=%q cmd=%v", m.loadingDevice, m.appQuery, cmd != nil)
+	}
+
+	m.focus = focusLogcat
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(*model)
+	if cmd != nil || m.status != "no log stream to reload" {
+		t.Fatalf("reload without app: status=%q cmd=%v", m.status, cmd != nil)
+	}
+
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
+	m.buffer.Add(core.LogLine{Raw: "old"})
+	before := m.streamID
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(*model)
+	if cmd == nil || m.status != "reloading logcat..." || m.streamID != before+2 {
+		t.Fatalf("reload: status=%q streamID=%d before=%d cmd=%v", m.status, m.streamID, before, cmd != nil)
+	}
+	if got := m.buffer.Lines(); len(got) != 0 {
+		t.Fatalf("reload kept lines: %+v", got)
+	}
+
+	m.width = 120
+	m.height = 40
+	m.resize()
+	view := m.View()
+	if !strings.Contains(view, "r: devices") || !strings.Contains(view, "ctrl+r: reload") || strings.Contains(view, "ctrl+r: refresh") {
+		t.Fatalf("footer = %q", stripANSI(view))
+	}
+}

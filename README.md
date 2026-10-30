@@ -102,7 +102,8 @@ If the selected app PID cannot be resolved, no logs are captured.
 | `g` / `G` | Go to top / bottom while Logcat is focused |
 | `ctrl+l` | Cycle log level filter: all, `E`, `W`, `I`, `D` |
 | `ctrl+o` | Toggle selected app PID-only capture; turning it off clears recent logs |
-| `ctrl+r` | Refresh devices |
+| `r` | Refresh devices while the Devices panel is focused |
+| `ctrl+r` | Reload logcat for the selected app and resolve its PID again |
 | `ctrl+k` | Clear logs |
 | `ctrl+p` | Pause / resume rendering |
 | `ctrl+q` / `ctrl+c` | Quit |
