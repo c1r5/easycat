@@ -155,6 +155,17 @@ exit 1
 	}
 
 	stdout.Reset()
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554"}, client, &stdout, ioDiscard()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "hello app") || !strings.Contains(stdout.String(), "other") || !strings.Contains(stdout.String(), "boom") {
+		t.Fatalf("logs without package = %q", stdout.String())
+	}
+	if err := execute(ctx, []string{"logs"}, client, ioDiscard(), ioDiscard()); err == nil || !strings.Contains(err.Error(), "--serial is required") {
+		t.Fatalf("missing serial = %v", err)
+	}
+
+	stdout.Reset()
 	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "-n", "1"}, client, &stdout, ioDiscard()); err != nil {
 		t.Fatal(err)
 	}

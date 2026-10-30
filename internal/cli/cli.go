@@ -19,7 +19,7 @@ const usage = `easycat devices
 easycat devices info --serial SERIAL
 easycat apps --serial SERIAL [--query TEXT]
 easycat apps info --serial SERIAL --package NAME
-easycat logs --serial SERIAL --package NAME [--level E|W|I|D] [--text TEXT] [--pid-only] [--lines N] [--from TIME] [--until TIME] [-f]
+easycat logs --serial SERIAL [--package NAME] [--level E|W|I|D] [--text TEXT] [--pid-only] [--lines N] [--from TIME] [--until TIME] [-f]
 
 With no arguments, easycat opens the terminal UI.
 `
@@ -152,8 +152,8 @@ func cmdLogs(ctx context.Context, args []string, client core.Client, stdout, std
 	if err := parseFlags(fs, args); err != nil {
 		return finish(err)
 	}
-	if *serial == "" || *name == "" {
-		return errors.New("--serial and --package are required")
+	if *serial == "" {
+		return errors.New("--serial is required")
 	}
 	normalized := strings.ToUpper(*level)
 	switch normalized {
@@ -162,7 +162,8 @@ func cmdLogs(ctx context.Context, args []string, client core.Client, stdout, std
 		return errors.New("level must be E, W, I, or D")
 	}
 	pid := ""
-	if *pidOnly {
+	pidOnlyOn := *pidOnly && *name != ""
+	if pidOnlyOn {
 		var err error
 		pid, err = client.PID(ctx, *serial, *name)
 		if err != nil || pid == "" {
@@ -215,7 +216,7 @@ func cmdLogs(ctx context.Context, args []string, client core.Client, stdout, std
 	}
 	defer stream.Stop()
 
-	filters := core.Filters{Package: *name, Text: *text, Level: normalized, PIDOnly: *pidOnly, PID: pid}
+	filters := core.Filters{Package: *name, Text: *text, Level: normalized, PIDOnly: pidOnlyOn, PID: pid}
 	printed := 0
 	for {
 		select {
