@@ -97,20 +97,21 @@ easycat apps info --serial SERIAL --package NAME
 easycat logs --serial SERIAL
 easycat logs --serial SERIAL --package NAME --lines 20 --from "01-02 15:04:05.000" --until "01-02 15:04:05.000"
 easycat logs --serial SERIAL --package NAME -f
+easycat install-skill
 ```
 
 `devices` prints `serial`, `state`, and `model` separated by tabs. `apps --query` keeps package names that contain the text, without caring about case. `logs` prints the current buffer and exits. `--package` limits that output to one app. With a package, `--pid-only` defaults to on and the lines come from the PID resolved when the command starts. `--lines` (`-n`) stops after that many matching lines. `--from` and `--until` keep lines in that window. A time is `YYYY-MM-DD HH:MM:SS` or `MM-DD HH:MM:SS.mmm`. `-f` (`--follow`) keeps reading new lines until the process is stopped, the line count is reached, or a line passes `--until`. `--level` accepts `E`, `W`, `I`, and `D`.
 
 ## Agent skill
 
-`.agents/skills/easycat/SKILL.md` is the procedure for an agent that needs logcat. Agents that scan this checkout find it there. To use it from other projects, link the directory into the skill folder:
+`easycat install-skill` writes the agent procedure that is compiled into the binary:
 
-```sh
-mkdir -p ~/.agents/skills
-ln -s "$(pwd)/.agents/skills/easycat" ~/.agents/skills/easycat
+```text
+~/.agents/skills/easycat/SKILL.md
+~/.grok/skills/easycat/SKILL.md
+~/.claude/skills/easycat/SKILL.md
+~/.cursor/skills/easycat/SKILL.md
 ```
-
-The same link works at `~/.grok/skills/easycat`, `~/.claude/skills/easycat`, or `~/.cursor/skills/easycat`.
 
 ## Shortcuts
 

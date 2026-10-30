@@ -20,6 +20,7 @@ easycat devices info --serial SERIAL
 easycat apps --serial SERIAL [--query TEXT]
 easycat apps info --serial SERIAL --package NAME
 easycat logs --serial SERIAL [--package NAME] [--level E|W|I|D] [--text TEXT] [--pid-only] [--lines N] [--from TIME] [--until TIME] [-f]
+easycat install-skill
 
 With no arguments, easycat opens the terminal UI.
 `
@@ -42,6 +43,8 @@ func execute(ctx context.Context, args []string, client core.Client, stdout, std
 		return cmdApps(ctx, args[1:], client, stdout, stderr)
 	case "logs":
 		return cmdLogs(ctx, args[1:], client, stdout, stderr)
+	case "install-skill":
+		return cmdInstallSkill(args[1:], stdout, stderr)
 	default:
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("unknown command %s", args[0])

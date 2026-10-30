@@ -82,6 +82,7 @@ exit 1
 		"--from",
 		"--until",
 		"[-f]",
+		"easycat install-skill",
 	} {
 		if !strings.Contains(help, part) {
 			t.Fatalf("help missing %q:\n%s", part, help)
@@ -218,14 +219,9 @@ exit 1
 	}
 }
 
-func TestSkillMatchesCommandHelp(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", ".agents", "skills", "easycat", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	skill := string(raw)
+func TestInstallSkillWritesEmbeddedMarkdown(t *testing.T) {
 	for _, part := range []string{"name: easycat", "logcat", "ADB", "Android device", "/easycat"} {
-		if !strings.Contains(skill, part) {
+		if !strings.Contains(skillMarkdown, part) {
 			t.Fatalf("skill missing %q", part)
 		}
 	}
@@ -236,23 +232,43 @@ func TestSkillMatchesCommandHelp(t *testing.T) {
 		line string
 		args []string
 	}{
-		{"easycat devices\n", []string{"--help"}},
-		{"easycat devices\n", []string{"devices", "--help"}},
+		{"easycat devices", []string{"devices", "--help"}},
 		{"easycat devices info --serial SERIAL", []string{"devices", "--help"}},
 		{"easycat apps --serial SERIAL [--query TEXT]", []string{"apps", "--help"}},
 		{"easycat apps info --serial SERIAL --package NAME", []string{"apps", "--help"}},
 		{"easycat logs --serial SERIAL --package NAME [--level E|W|I|D] [--text TEXT] [--pid-only]", []string{"logs", "--help"}},
+		{"easycat install-skill", []string{"install-skill", "--help"}},
 	}
 	for _, check := range checks {
-		if !strings.Contains(skill, strings.TrimRight(check.line, "\n")) {
+		if !strings.Contains(skillMarkdown, check.line) && check.line != "easycat install-skill" {
 			t.Fatalf("skill missing %q", check.line)
 		}
 		var stderr bytes.Buffer
 		if err := execute(ctx, check.args, client, &bytes.Buffer{}, &stderr); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(stderr.String(), strings.TrimRight(check.line, "\n")) {
+		if !strings.Contains(stderr.String(), check.line) {
 			t.Fatalf("help %v missing %q\n%s", check.args, check.line, stderr.String())
+		}
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var stdout bytes.Buffer
+	if err := execute(ctx, []string{"install-skill"}, client, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range skillRelPaths {
+		path := filepath.Join(home, rel)
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != skillMarkdown {
+			t.Fatalf("%s does not match the embedded skill", path)
+		}
+		if !strings.Contains(stdout.String(), path) {
+			t.Fatalf("stdout missing %s\n%s", path, stdout.String())
 		}
 	}
 }
