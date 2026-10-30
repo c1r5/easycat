@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`easycat` is a Go terminal UI for Android `logcat` debugging. The entry point is [main.go](/home/dev/Dev/github.com/c1r5/easycat/main.go), which delegates to `internal/app`. Core packages live under `internal/`: `adb` wraps ADB commands and streaming, `domain` contains devices, packages, log parsing, filters, and buffers, and `tui` contains the Bubble Tea model, commands, views, and delegates. Tests sit beside implementation files as `*_test.go`. User documentation and demo assets live in `README.md` and `docs/`.
+`easycat` is a Go terminal UI for Android `logcat` debugging. The entry point is [main.go](/home/dev/Dev/github.com/c1r5/easycat/main.go), which delegates to `internal/app`. `internal/core` runs ADB, lists devices and apps, parses log lines, filters them, and publishes the stream on a bus. `internal/tui` contains the Bubble Tea model, commands, views, and delegates. Tests sit beside implementation files as `*_test.go`. User documentation and demo assets live in `README.md` and `docs/`.
 
 ## Build, Test, and Development Commands
 
@@ -17,7 +17,7 @@ ADB must be available in `PATH`; verify with `adb devices -l` before testing dev
 
 ## Coding Style & Naming Conventions
 
-Follow standard Go formatting: run `gofmt` on changed `.go` files and keep imports organized by `go fmt`/`goimports` conventions. Use tabs for Go indentation. Keep package names short and lowercase (`adb`, `tui`, `domain`). Export only API needed across packages; prefer unexported helpers inside `internal/tui` unless another package needs them. Test names should use descriptive `TestBehaviorCondition` style, as in `TestLogBatchIgnoresStaleStream`.
+Follow standard Go formatting: run `gofmt` on changed `.go` files and keep imports organized by `go fmt`/`goimports` conventions. Use tabs for Go indentation. Keep package names short and lowercase (`core`, `tui`). Export only API needed across packages; prefer unexported helpers inside `internal/tui` unless another package needs them. Test names should use descriptive `TestBehaviorCondition` style, as in `TestLogBatchIgnoresStaleStream`.
 
 ## Testing Guidelines
 
@@ -54,29 +54,17 @@ When a requested change requires user-facing documentation updates, update `READ
 - `internal/app/app.go`: wires the application together.
   - Creates the Bubble Tea program.
   - Uses `tea.WithAltScreen()`.
-  - Instantiates the TUI with `tui.New(ctx, adb.NewClient())`.
+  - Instantiates the TUI with `tui.New(ctx, core.NewClient())`.
 
-### `internal/adb`
+### `internal/core`
 
-- `internal/adb/adb.go`: thin wrapper around `exec.Command` for ADB.
-  - `ListDevices`: runs `adb devices -l`.
-  - `ListPackages`: runs `adb -s SERIAL shell pm list packages`.
-  - `PIDOf`: runs `adb -s SERIAL shell pidof PACKAGE`.
-  - `StartLogcat`: runs realtime logcat with `adb -s SERIAL logcat -v threadtime -T 0`.
-  - `Stream`: owns logcat channels and cancellation.
-- `internal/adb/adb_test.go`: tests logcat argument construction.
-
-### `internal/domain`
-
-- `internal/domain/domain.go`: core structs and state helpers.
-  - `Device`, `Package`, `LogLine`, `Filters`.
-  - `LogBuffer`: circular log buffer with a fixed limit.
-  - Filter matching logic for text, level, and PID.
-- `internal/domain/parse.go`: parsing helpers.
-  - Parses ADB device lines.
-  - Parses package lines.
-  - Parses common logcat formats.
-- `internal/domain/domain_test.go`: parser, filter, and buffer tests.
+- `internal/core/adb.go`: runs the `adb` binary and returns stdout.
+- `internal/core/devices.go`: `ListDevices` and `DeviceInfo` from `adb devices -l`.
+- `internal/core/apps.go`: `ListApps`, `AppInfo`, and `PID` (`pm list packages`, `pidof`).
+- `internal/core/logcat.go`: starts `adb logcat -v threadtime -T 0`, parses lines, publishes them.
+- `internal/core/bus.go`: subscription bus. A full queue drops the new event.
+- `internal/core/filter.go`: text, level, and PID matching, plus the log buffer.
+- `internal/core/parse_test.go` and `internal/core/bus_test.go`: parser, filter, buffer, and bus tests.
 
 ### `internal/tui`
 
@@ -91,7 +79,7 @@ When a requested change requires user-facing documentation updates, update `READ
   - Device loading.
   - App loading.
   - Logcat stream startup.
-  - Stream line/done waiters.
+  - Bus subscription waiter.
 - `internal/tui/view.go`: layout and visual rendering.
   - Left/right panel sizing.
   - Footer rendering.

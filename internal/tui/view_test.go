@@ -7,8 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/c1r5/easycat/internal/adb"
-	"github.com/c1r5/easycat/internal/domain"
+	"github.com/c1r5/easycat/internal/core"
 )
 
 func TestViewFitsTerminal(t *testing.T) {
@@ -23,7 +22,7 @@ func TestViewFitsTerminal(t *testing.T) {
 	}
 
 	for _, size := range sizes {
-		m := New(context.Background(), adb.NewClient()).(*model)
+		m := New(context.Background(), core.NewClient()).(*model)
 		m.width = size.width
 		m.height = size.height
 		m.status = "this is a very long status that should never force the footer outside the terminal width"
@@ -44,7 +43,7 @@ func TestViewFitsTerminal(t *testing.T) {
 }
 
 func TestViewContainsOneFooterWithHostileLogText(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
+	m := New(context.Background(), core.NewClient()).(*model)
 	m.width = 80
 	m.height = 24
 	m.resize()
@@ -63,6 +62,6 @@ func TestViewContainsOneFooterWithHostileLogText(t *testing.T) {
 	}
 }
 
-func domainLogLine(raw string) domain.LogLine {
-	return domain.LogLine{Raw: raw}
+func domainLogLine(raw string) core.LogLine {
+	return core.LogLine{Raw: raw}
 }
