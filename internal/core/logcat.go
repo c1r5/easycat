@@ -57,9 +57,22 @@ func (s *Stream) Stop() {
 	}
 }
 
+type LogcatQuery struct {
+	Follow bool
+	Since  string
+}
+
 func (c Client) StartLogcat(ctx context.Context, serial string, bus *Bus, streamID int) (*Stream, error) {
+	return c.startLogcat(ctx, serial, bus, streamID, c.logcatArgs(serial))
+}
+
+func (c Client) StartLogcatQuery(ctx context.Context, serial string, bus *Bus, streamID int, query LogcatQuery) (*Stream, error) {
+	return c.startLogcat(ctx, serial, bus, streamID, c.logcatQueryArgs(serial, query))
+}
+
+func (c Client) startLogcat(ctx context.Context, serial string, bus *Bus, streamID int, args []string) (*Stream, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(streamCtx, c.Path, c.logcatArgs(serial)...)
+	cmd := exec.CommandContext(streamCtx, c.Path, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -123,7 +136,22 @@ func (c Client) StartLogcat(ctx context.Context, serial string, bus *Bus, stream
 }
 
 func (c Client) logcatArgs(serial string) []string {
-	return []string{"-s", serial, "logcat", "-v", "threadtime", "-T", "0"}
+	return c.logcatQueryArgs(serial, LogcatQuery{Follow: true})
+}
+
+func (c Client) logcatQueryArgs(serial string, query LogcatQuery) []string {
+	args := []string{"-s", serial, "logcat", "-v", "threadtime"}
+	if query.Follow {
+		if query.Since != "" {
+			return append(args, "-T", query.Since)
+		}
+		return append(args, "-T", "0")
+	}
+	args = append(args, "-d")
+	if query.Since != "" {
+		args = append(args, "-t", query.Since)
+	}
+	return args
 }
 
 func (c Client) LogcatWindow() string {

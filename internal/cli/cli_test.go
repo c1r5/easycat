@@ -15,6 +15,9 @@ func TestAgentCommandChain(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "adb")
 	body := []byte(`#!/bin/sh
+if [ -n "$ADB_LOG" ]; then
+  printf '%s\n' "$*" >> "$ADB_LOG"
+fi
 if [ "$1" = "devices" ]; then
   printf '%s\n' "List of devices attached" "emulator-5554 device product:sdk model:Pixel_7" "offline-1 offline"
   exit 0
@@ -45,6 +48,17 @@ exit 1
 	}
 	client := core.Client{Path: script}
 	ctx := context.Background()
+	adbLog := filepath.Join(dir, "adb.log")
+	t.Setenv("ADB_LOG", adbLog)
+	lastAdb := func() string {
+		t.Helper()
+		data, err := os.ReadFile(adbLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		return lines[len(lines)-1]
+	}
 
 	var stderr bytes.Buffer
 	err := execute(ctx, []string{"--help"}, client, ioDiscard(), &stderr)
@@ -64,6 +78,10 @@ exit 1
 		"--level",
 		"--text",
 		"--pid-only",
+		"--lines",
+		"--from",
+		"--until",
+		"[-f]",
 	} {
 		if !strings.Contains(help, part) {
 			t.Fatalf("help missing %q:\n%s", part, help)
@@ -82,7 +100,7 @@ exit 1
 	}
 	stderr.Reset()
 	err = execute(ctx, []string{"logs", "--help"}, client, ioDiscard(), &stderr)
-	if err != nil || !strings.Contains(stderr.String(), "--level") || !strings.Contains(stderr.String(), "--text") || !strings.Contains(stderr.String(), "--pid-only") {
+	if err != nil || !strings.Contains(stderr.String(), "--lines") || !strings.Contains(stderr.String(), "--from") || !strings.Contains(stderr.String(), "--until") || !strings.Contains(stderr.String(), "[-f]") {
 		t.Fatalf("logs help: err=%v\n%s", err, stderr.String())
 	}
 
@@ -131,6 +149,49 @@ exit 1
 	logs := stdout.String()
 	if !strings.Contains(logs, "hello app") || !strings.Contains(logs, "boom") || strings.Contains(logs, "other") {
 		t.Fatalf("logs = %q", logs)
+	}
+	if argv := lastAdb(); !strings.Contains(argv, " -d") || strings.Contains(argv, " -T") {
+		t.Fatalf("dump argv = %q", argv)
+	}
+
+	stdout.Reset()
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "-n", "1"}, client, &stdout, ioDiscard()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "hello app") || strings.Contains(stdout.String(), "boom") {
+		t.Fatalf("lines = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "--from", "2026-01-01 00:00:00.002", "--until", "2026-01-01T00:00:00.002"}, client, &stdout, ioDiscard()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), "hello app") || !strings.Contains(stdout.String(), "boom") {
+		t.Fatalf("time window = %q", stdout.String())
+	}
+	if argv := lastAdb(); !strings.Contains(argv, " -d") || !strings.Contains(argv, " -t") || !strings.Contains(argv, "01-01 00:00:00.002") {
+		t.Fatalf("window argv = %q", argv)
+	}
+
+	stdout.Reset()
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "-f", "--lines", "1"}, client, &stdout, ioDiscard()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), "hello app") || strings.Contains(stdout.String(), "boom") {
+		t.Fatalf("follow = %q", stdout.String())
+	}
+	if argv := lastAdb(); !strings.Contains(argv, " -T") || !strings.Contains(argv, " 0") || strings.Contains(argv, " -d") {
+		t.Fatalf("follow argv = %q", argv)
+	}
+
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "--from", "not-a-time"}, client, ioDiscard(), ioDiscard()); err == nil || !strings.Contains(err.Error(), "cannot parse time") {
+		t.Fatalf("bad time = %v", err)
+	}
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "--from", "01-02 00:00:00", "--until", "01-01 00:00:00"}, client, ioDiscard(), ioDiscard()); err == nil || !strings.Contains(err.Error(), "--from is after --until") {
+		t.Fatalf("inverted window = %v", err)
+	}
+	if err := execute(ctx, []string{"logs", "--serial", "emulator-5554", "--package", "com.example", "--lines", "-1"}, client, ioDiscard(), ioDiscard()); err == nil || !strings.Contains(err.Error(), "--lines must be zero or greater") {
+		t.Fatalf("negative lines = %v", err)
 	}
 
 	stdout.Reset()
