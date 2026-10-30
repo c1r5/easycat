@@ -83,7 +83,7 @@ make dev
 cargo install cargo-watch
 ```
 
-If the selected app PID cannot be resolved, no logs are captured.
+If the selected app PID cannot be resolved, no logs are captured. The device list refreshes every 5 seconds. When that app gets a PID after it was closed, or the PID changes, logcat reloads.
 
 ## Shortcuts
 
@@ -102,7 +102,6 @@ If the selected app PID cannot be resolved, no logs are captured.
 | `g` / `G` | Go to top / bottom while Logcat is focused |
 | `ctrl+l` | Cycle log level filter: all, `E`, `W`, `I`, `D` |
 | `ctrl+o` | Toggle selected app PID-only capture; turning it off clears recent logs |
-| `r` | Refresh devices while the Devices panel is focused |
 | `ctrl+r` | Reload logcat for the selected app and resolve its PID again |
 | `ctrl+k` | Clear logs |
 | `ctrl+p` | Pause / resume rendering |

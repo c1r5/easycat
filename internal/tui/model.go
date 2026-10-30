@@ -63,45 +63,44 @@ type model struct {
 	selectedApp    *core.App
 
 	paused        bool
-	loadingDevice bool
 	loadingApps   bool
+	appStateKnown bool
+	appRunning    bool
+	appPID        string
 	status        string
 }
 
 func New(ctx context.Context, client core.Client) tea.Model {
-	devices := list.New([]list.Item{}, compactDelegate{}, 0, 0)
-	devices.SetShowHelp(false)
-	devices.SetShowTitle(false)
-	devices.SetShowPagination(false)
-	devices.SetFilteringEnabled(false)
-	devices.SetShowStatusBar(false)
-
-	apps := list.New([]list.Item{}, compactDelegate{}, 0, 0)
-	apps.SetShowHelp(false)
-	apps.SetShowTitle(false)
-	apps.SetShowPagination(false)
-	apps.SetFilteringEnabled(false)
-	apps.SetShowStatusBar(false)
-
 	filter := textinput.New()
 	filter.Placeholder = "contains text"
 	filter.Prompt = ""
 
 	logs := viewport.New(0, 0)
 
-	return &model{
+	m := &model{
 		ctx:         ctx,
 		client:      client,
 		focus:       focusDevices,
 		filterField: filterFieldText,
-		devices:     devices,
-		apps:        apps,
 		logs:        logs,
 		filter:      filter,
 		buffer:      core.NewLogBuffer(core.MaxLogLines),
 		bus:         core.NewBus(core.DefaultQueueSize),
 		status:      "loading devices...",
 	}
+	m.devices = newCompactList(compactDelegate{kind: kindDevices, model: m})
+	m.apps = newCompactList(compactDelegate{kind: kindApps, model: m})
+	return m
+}
+
+func newCompactList(delegate compactDelegate) list.Model {
+	items := list.New([]list.Item{}, delegate, 0, 0)
+	items.SetShowHelp(false)
+	items.SetShowTitle(false)
+	items.SetShowPagination(false)
+	items.SetFilteringEnabled(false)
+	items.SetShowStatusBar(false)
+	return items
 }
 
 func (m *model) Init() tea.Cmd {
@@ -110,7 +109,7 @@ func (m *model) Init() tea.Cmd {
 		m.events = sub.Events
 		m.cancelSub = sub.Cancel
 	}
-	return m.loadDevicesCmd()
+	return m.pollDevicesCmd(0)
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -126,15 +125,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFilterInput(msg)
 		}
 		return m.updateKey(msg)
-	case devicesLoadedMsg:
-		m.loadingDevice = false
+	case devicePollMsg:
+		next := m.pollDevicesCmd(devicePollEvery)
 		if msg.err != nil {
 			m.status = "adb devices failed: " + msg.err.Error()
-			return m, nil
+			return m, next
 		}
-		m.status = fmt.Sprintf("%d device(s)", len(msg.devices))
 		m.setDeviceItems(msg.devices)
-		return m, nil
+		if m.status == "loading devices..." || strings.HasPrefix(m.status, "adb devices failed") {
+			m.status = fmt.Sprintf("%d device(s)", len(msg.devices))
+		}
+		if cmd := m.applyPolledApp(msg); cmd != nil {
+			return m, tea.Batch(cmd, next)
+		}
+		return m, next
 	case appsLoadedMsg:
 		m.loadingApps = false
 		if msg.err != nil {
@@ -158,6 +162,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream = msg.stream
 		m.filters.PID = msg.pid
 		m.filters.PIDOnly = msg.pid != ""
+		m.appStateKnown = true
+		m.appRunning = msg.pid != ""
+		m.appPID = msg.pid
 		m.resetCaptureState()
 		m.status = "streaming from " + m.client.LogcatWindow()
 		if msg.pid == "" {
@@ -240,12 +247,6 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "r":
-		if m.focus == focusDevices {
-			m.status = "refreshing devices..."
-			m.loadingDevice = true
-			return m, m.loadDevicesCmd()
-		}
 	case "ctrl+k":
 		m.buffer.Clear()
 		m.refreshLogContent(false)
@@ -329,6 +330,9 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		}
 		m.selectedDevice = &item
 		m.selectedApp = nil
+		m.appStateKnown = false
+		m.appRunning = false
+		m.appPID = ""
 		m.filters.Package = ""
 		m.filters.PID = ""
 		m.filters.PIDOnly = false
@@ -351,6 +355,9 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.selectedApp = &item
+		m.appStateKnown = false
+		m.appRunning = false
+		m.appPID = ""
 		m.filters.Package = item.Name
 		m.filters.PID = ""
 		m.filters.PIDOnly = false
@@ -364,11 +371,61 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 }
 
 func (m *model) setDeviceItems(devices []core.Device) {
+	serial := ""
+	if item, ok := m.devices.SelectedItem().(core.Device); ok {
+		serial = item.Serial
+	}
 	items := make([]list.Item, len(devices))
 	for i, device := range devices {
 		items[i] = device
 	}
 	m.devices.SetItems(items)
+	if serial != "" {
+		for i, device := range devices {
+			if device.Serial == serial {
+				m.devices.Select(i)
+				break
+			}
+		}
+	}
+	if m.selectedDevice == nil {
+		return
+	}
+	for _, device := range devices {
+		if device.Serial == m.selectedDevice.Serial {
+			updated := device
+			m.selectedDevice = &updated
+			return
+		}
+	}
+}
+
+func (m *model) applyPolledApp(msg devicePollMsg) tea.Cmd {
+	if !msg.checked || m.selectedApp == nil || msg.appName != m.selectedApp.Name {
+		return nil
+	}
+	if m.selectedDevice == nil || m.selectedDevice.State != "device" {
+		return nil
+	}
+	running := msg.pid != ""
+	if !m.appStateKnown {
+		m.appStateKnown = true
+		m.appRunning = running
+		m.appPID = msg.pid
+		return nil
+	}
+	reopened := running && (!m.appRunning || msg.pid != m.appPID)
+	m.appRunning = running
+	if running {
+		m.appPID = msg.pid
+	} else {
+		m.appPID = ""
+	}
+	if !reopened {
+		return nil
+	}
+	_, cmd := m.reloadLogs()
+	return cmd
 }
 
 func (m *model) setAppItems(packages []core.App) {
