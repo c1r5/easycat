@@ -1,4 +1,4 @@
-package domain
+package core
 
 import (
 	"container/ring"
@@ -6,52 +6,6 @@ import (
 )
 
 const MaxLogLines = 10000
-
-type Device struct {
-	Serial string
-	Model  string
-	State  string
-	Raw    string
-}
-
-func (d Device) Title() string {
-	state := d.State
-	if state == "" {
-		state = "unknown"
-	}
-	if d.Model != "" {
-		return d.Model + "  " + state
-	}
-	return d.Serial + "  " + state
-}
-
-func (d Device) Description() string {
-	if d.Model != "" && d.Serial != "" {
-		return d.Serial + "  " + d.State
-	}
-	return d.State
-}
-
-func (d Device) FilterValue() string {
-	return d.Serial + " " + d.Model + " " + d.State
-}
-
-type Package struct {
-	Name string
-}
-
-func (p Package) Title() string       { return p.Name }
-func (p Package) Description() string { return "" }
-func (p Package) FilterValue() string { return p.Name }
-
-type LogLine struct {
-	Timestamp string
-	Level     string
-	Tag       string
-	PID       string
-	Message   string
-	Raw       string
-}
 
 type Filters struct {
 	Package string

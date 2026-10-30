@@ -3,8 +3,6 @@ package core
 import (
 	"testing"
 	"time"
-
-	"github.com/c1r5/easycat/internal/domain"
 )
 
 func TestBusDeliversToSubscribersAndDropsWhenFull(t *testing.T) {
@@ -14,7 +12,7 @@ func TestBusDeliversToSubscribersAndDropsWhenFull(t *testing.T) {
 	defer first.Cancel()
 	defer second.Cancel()
 
-	bus.Publish(Event{Kind: KindLog, Line: domain.LogLine{Raw: "a"}})
+	bus.Publish(Event{Kind: KindLog, Line: LogLine{Raw: "a"}})
 	bus.Publish(Event{Kind: KindStreamStopped, Err: nil})
 
 	for _, sub := range []Subscription{first, second} {
@@ -30,8 +28,8 @@ func TestBusDeliversToSubscribersAndDropsWhenFull(t *testing.T) {
 
 	tight := NewBus(1)
 	sub := tight.Subscribe()
-	tight.Publish(Event{Kind: KindLog, Line: domain.LogLine{Raw: "kept"}})
-	tight.Publish(Event{Kind: KindLog, Line: domain.LogLine{Raw: "dropped"}})
+	tight.Publish(Event{Kind: KindLog, Line: LogLine{Raw: "kept"}})
+	tight.Publish(Event{Kind: KindLog, Line: LogLine{Raw: "dropped"}})
 	got := <-sub.Events
 	if got.Line.Raw != "kept" {
 		t.Fatalf("event = %+v, want kept", got)

@@ -10,12 +10,11 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/c1r5/easycat/internal/adb"
-	"github.com/c1r5/easycat/internal/domain"
+	"github.com/c1r5/easycat/internal/core"
 )
 
 func TestRenderLogLineWrapped(t *testing.T) {
-	line := domain.LogLine{
+	line := core.LogLine{
 		Level:   "E",
 		Tag:     "App",
 		Message: strings.Repeat("payload", 8),
@@ -34,8 +33,8 @@ func TestRenderLogLineWrapped(t *testing.T) {
 }
 
 func TestSelectDeviceFocusesApps(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	device := domain.Device{Serial: "emulator-5554", State: "device"}
+	m := New(context.Background(), core.NewClient()).(*model)
+	device := core.Device{Serial: "emulator-5554", State: "device"}
 	m.devices.SetItems([]list.Item{device})
 	m.focus = focusDevices
 
@@ -49,15 +48,15 @@ func TestSelectDeviceFocusesApps(t *testing.T) {
 }
 
 func TestLogBatchIgnoresStaleStream(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	currentStream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	currentStream := &core.Stream{}
 	m.stream = currentStream
 	m.streamID = 2
 
 	updated, _ := m.Update(logBatchMsg{
-		stream:   &adb.Stream{},
+		stream:   &core.Stream{},
 		streamID: 1,
-		lines:    []domain.LogLine{{Raw: "stale"}},
+		lines:    []core.LogLine{{Raw: "stale"}},
 	})
 	m = updated.(*model)
 
@@ -67,13 +66,13 @@ func TestLogBatchIgnoresStaleStream(t *testing.T) {
 }
 
 func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	stream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	stream := &core.Stream{}
 	m.stream = stream
 	m.streamID = 1
 	m.paused = true
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
 	m.width = 80
@@ -84,7 +83,7 @@ func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
 	updated, _ := m.Update(logBatchMsg{
 		stream:   stream,
 		streamID: 1,
-		lines:    []domain.LogLine{{PID: "1234", Raw: "new"}},
+		lines:    []core.LogLine{{PID: "1234", Raw: "new"}},
 	})
 	m = updated.(*model)
 
@@ -97,19 +96,19 @@ func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
 }
 
 func TestLogBatchDropsLinesWhenPIDOnlyDisabled(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	stream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	stream := &core.Stream{}
 	m.stream = stream
 	m.streamID = 1
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = false
 
 	updated, _ := m.Update(logBatchMsg{
 		stream:   stream,
 		streamID: 1,
-		lines: []domain.LogLine{
+		lines: []core.LogLine{
 			{PID: "1234", Raw: "app log"},
 			{PID: "9999", Raw: "system log"},
 		},
@@ -122,19 +121,19 @@ func TestLogBatchDropsLinesWhenPIDOnlyDisabled(t *testing.T) {
 }
 
 func TestLogBatchCapturesOnlySelectedPID(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	stream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	stream := &core.Stream{}
 	m.stream = stream
 	m.streamID = 1
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
 
 	updated, _ := m.Update(logBatchMsg{
 		stream:   stream,
 		streamID: 1,
-		lines: []domain.LogLine{
+		lines: []core.LogLine{
 			{PID: "9999", Raw: "system log"},
 			{PID: "1234", Raw: "app log"},
 		},
@@ -148,12 +147,12 @@ func TestLogBatchCapturesOnlySelectedPID(t *testing.T) {
 }
 
 func TestDisablingPIDOnlyClearsCapture(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
-	m.buffer.Add(domain.LogLine{PID: "1234", Raw: "captured"})
+	m.buffer.Add(core.LogLine{PID: "1234", Raw: "captured"})
 
 	updated, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(*model)
@@ -167,14 +166,14 @@ func TestDisablingPIDOnlyClearsCapture(t *testing.T) {
 }
 
 func TestSelectingAppClearsBufferWhileResolvingPID(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.old"}
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.old"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
 	m.focus = focusApps
-	m.buffer.Add(domain.LogLine{PID: "1234", Raw: "old app log"})
-	m.apps.SetItems([]list.Item{domain.Package{Name: "com.new"}})
+	m.buffer.Add(core.LogLine{PID: "1234", Raw: "old app log"})
+	m.apps.SetItems([]list.Item{core.App{Name: "com.new"}})
 
 	_, cmd := m.selectFocused()
 	if cmd == nil {
@@ -192,8 +191,8 @@ func TestSelectingAppClearsBufferWhileResolvingPID(t *testing.T) {
 }
 
 func TestActionShortcutsRequireCtrl(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	m.buffer.Add(domain.LogLine{Raw: "keep"})
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.buffer.Add(core.LogLine{Raw: "keep"})
 
 	updated, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = updated.(*model)
@@ -209,8 +208,8 @@ func TestActionShortcutsRequireCtrl(t *testing.T) {
 }
 
 func TestStreamDoneIgnoresStaleStream(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	currentStream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	currentStream := &core.Stream{}
 	m.stream = currentStream
 	m.streamID = 2
 	m.status = "streaming"
@@ -227,7 +226,7 @@ func TestStreamDoneIgnoresStaleStream(t *testing.T) {
 }
 
 func TestRenderLogLineSanitizesTerminalControls(t *testing.T) {
-	line := domain.LogLine{
+	line := core.LogLine{
 		Level:   "E",
 		Tag:     "App\x1b[31m",
 		Message: "bad\x07\r\ntext\x7f",
@@ -284,12 +283,12 @@ exit 1
 		t.Fatal(err)
 	}
 
-	m := New(context.Background(), adb.Client{Path: script}).(*model)
+	m := New(context.Background(), core.Client{Path: script}).(*model)
 	sub := m.bus.Subscribe()
 	t.Cleanup(sub.Cancel)
 	m.events = sub.Events
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	id := m.beginStream()
 	started, ok := m.startStreamCmd("emulator-5554", "com.example", id)().(streamStartedMsg)
 	if !ok {

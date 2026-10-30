@@ -1,10 +1,6 @@
 package core
 
-import (
-	"sync"
-
-	"github.com/c1r5/easycat/internal/domain"
-)
+import "sync"
 
 const DefaultQueueSize = 2048
 
@@ -19,7 +15,7 @@ const (
 type Event struct {
 	Kind     Kind
 	StreamID int
-	Line     domain.LogLine
+	Line     LogLine
 	Err      error
 	Serial   string
 	Package  string

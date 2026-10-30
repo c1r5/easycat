@@ -6,32 +6,30 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/c1r5/easycat/internal/adb"
 	"github.com/c1r5/easycat/internal/core"
-	"github.com/c1r5/easycat/internal/domain"
 )
 
 type devicesLoadedMsg struct {
-	devices []domain.Device
+	devices []core.Device
 	err     error
 }
 
 type appsLoadedMsg struct {
-	apps []domain.Package
+	apps []core.App
 	err  error
 }
 
 type streamStartedMsg struct {
-	stream   *adb.Stream
+	stream   *core.Stream
 	streamID int
 	pid      string
 	err      error
 }
 
 type logBatchMsg struct {
-	stream   *adb.Stream
+	stream   *core.Stream
 	streamID int
-	lines    []domain.LogLine
+	lines    []core.LogLine
 }
 
 type streamDoneMsg struct {
@@ -40,7 +38,7 @@ type streamDoneMsg struct {
 }
 
 type busReadMsg struct {
-	lines     []domain.LogLine
+	lines     []core.LogLine
 	streamID  int
 	hasLines  bool
 	hasFollow bool
@@ -56,7 +54,7 @@ func (m *model) loadDevicesCmd() tea.Cmd {
 
 func (m *model) loadAppsCmd(serial string) tea.Cmd {
 	return func() tea.Msg {
-		apps, err := m.client.ListPackages(m.ctx, serial)
+		apps, err := m.client.ListApps(m.ctx, serial)
 		return appsLoadedMsg{apps: apps, err: err}
 	}
 }
@@ -65,7 +63,7 @@ func (m *model) startStreamCmd(serial, packageName string, streamID int) tea.Cmd
 	return func() tea.Msg {
 		pidCtx, cancel := context.WithTimeout(m.ctx, adbPIDTimeout)
 		defer cancel()
-		pid, _ := m.client.PIDOf(pidCtx, serial, packageName)
+		pid, _ := m.client.PID(pidCtx, serial, packageName)
 		stream, err := m.client.StartLogcat(m.ctx, serial, m.bus, streamID)
 		return streamStartedMsg{stream: stream, streamID: streamID, pid: pid, err: err}
 	}
@@ -85,7 +83,7 @@ func (m *model) waitBusCmd() tea.Cmd {
 			return busReadMsg{hasFollow: true, follow: ev}
 		}
 
-		lines := []domain.LogLine{ev.Line}
+		lines := []core.LogLine{ev.Line}
 		timer := time.NewTimer(logBatchWindow)
 		defer timer.Stop()
 

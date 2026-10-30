@@ -12,9 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/c1r5/easycat/internal/adb"
 	"github.com/c1r5/easycat/internal/core"
-	"github.com/c1r5/easycat/internal/domain"
 )
 
 type focus int
@@ -38,7 +36,7 @@ const (
 
 type model struct {
 	ctx    context.Context
-	client adb.Client
+	client core.Client
 
 	width       int
 	height      int
@@ -50,19 +48,19 @@ type model struct {
 	logs    viewport.Model
 	filter  textinput.Model
 
-	filters     domain.Filters
-	buffer      *domain.LogBuffer
-	stream      *adb.Stream
+	filters     core.Filters
+	buffer      *core.LogBuffer
+	stream      *core.Stream
 	streamID    int
 	bus         *core.Bus
 	events      <-chan core.Event
 	cancelSub   func()
 	watchingBus bool
-	allApps     []domain.Package
+	allApps     []core.App
 	appQuery    string
 
-	selectedDevice *domain.Device
-	selectedApp    *domain.Package
+	selectedDevice *core.Device
+	selectedApp    *core.App
 
 	paused        bool
 	loadingDevice bool
@@ -70,7 +68,7 @@ type model struct {
 	status        string
 }
 
-func New(ctx context.Context, client adb.Client) tea.Model {
+func New(ctx context.Context, client core.Client) tea.Model {
 	devices := list.New([]list.Item{}, compactDelegate{}, 0, 0)
 	devices.SetShowHelp(false)
 	devices.SetShowTitle(false)
@@ -100,7 +98,7 @@ func New(ctx context.Context, client adb.Client) tea.Model {
 		apps:        apps,
 		logs:        logs,
 		filter:      filter,
-		buffer:      domain.NewLogBuffer(domain.MaxLogLines),
+		buffer:      core.NewLogBuffer(core.MaxLogLines),
 		bus:         core.NewBus(core.DefaultQueueSize),
 		status:      "loading devices...",
 	}
@@ -321,7 +319,7 @@ func (m *model) toggleSelectedFilter() {
 func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case focusDevices:
-		item, ok := m.devices.SelectedItem().(domain.Device)
+		item, ok := m.devices.SelectedItem().(core.Device)
 		if !ok {
 			return m, nil
 		}
@@ -344,7 +342,7 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 		m.focus = focusApps
 		return m, m.loadAppsCmd(item.Serial)
 	case focusApps:
-		item, ok := m.apps.SelectedItem().(domain.Package)
+		item, ok := m.apps.SelectedItem().(core.App)
 		if !ok || m.selectedDevice == nil {
 			return m, nil
 		}
@@ -361,7 +359,7 @@ func (m *model) selectFocused() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) setDeviceItems(devices []domain.Device) {
+func (m *model) setDeviceItems(devices []core.Device) {
 	items := make([]list.Item, len(devices))
 	for i, device := range devices {
 		items[i] = device
@@ -369,7 +367,7 @@ func (m *model) setDeviceItems(devices []domain.Device) {
 	m.devices.SetItems(items)
 }
 
-func (m *model) setAppItems(packages []domain.Package) {
+func (m *model) setAppItems(packages []core.App) {
 	m.allApps = packages
 	m.appQuery = ""
 	m.applyAppFilter()
@@ -402,7 +400,7 @@ func (m *model) updateAppFilterKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 func (m *model) applyAppFilter() {
 	query := strings.ToLower(strings.TrimSpace(m.appQuery))
-	filtered := make([]domain.Package, 0, len(m.allApps))
+	filtered := make([]core.App, 0, len(m.allApps))
 	for _, pkg := range m.allApps {
 		if query == "" || strings.Contains(strings.ToLower(pkg.Name), query) {
 			filtered = append(filtered, pkg)
@@ -443,7 +441,7 @@ func (m *model) beginStream() int {
 	return m.streamID
 }
 
-func (m *model) shouldCapture(line domain.LogLine) bool {
+func (m *model) shouldCapture(line core.LogLine) bool {
 	return m.selectedDevice != nil &&
 		m.selectedApp != nil &&
 		m.filters.PIDOnly &&
@@ -469,7 +467,7 @@ func (m *model) ensureBusWait() tea.Cmd {
 	return m.waitBusCmd()
 }
 
-func (m *model) capture(streamID int, lines []domain.LogLine) {
+func (m *model) capture(streamID int, lines []core.LogLine) {
 	if streamID != m.streamID || m.stream == nil {
 		return
 	}
@@ -489,7 +487,7 @@ func (m *model) capture(streamID int, lines []domain.LogLine) {
 func (m *model) applyBusEvent(event core.Event) {
 	switch event.Kind {
 	case core.KindLog:
-		m.capture(event.StreamID, []domain.LogLine{event.Line})
+		m.capture(event.StreamID, []core.LogLine{event.Line})
 	case core.KindStreamStopped:
 		m.finishStream(event.StreamID, event.Err)
 	}
@@ -535,7 +533,7 @@ func nextLevel(level string) string {
 	}
 }
 
-func renderLogLine(line domain.LogLine) string {
+func renderLogLine(line core.LogLine) string {
 	if line.Raw == "" {
 		return ""
 	}
@@ -577,7 +575,7 @@ func sanitizeTerminalText(s string) string {
 	return b.String()
 }
 
-func renderLogLineWrapped(line domain.LogLine, width int) []string {
+func renderLogLineWrapped(line core.LogLine, width int) []string {
 	rendered := renderLogLine(line)
 	if width <= 0 {
 		return []string{rendered}
