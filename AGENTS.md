@@ -69,6 +69,7 @@ When a requested change requires user-facing documentation updates, update `READ
 ### `internal/cli`
 
 - `internal/cli/cli.go`: `devices`, `apps`, and `logs` for agents. `logs` subscribes to the same bus as the TUI.
+- `internal/cli/skill.go`: `install-skill` writes the embedded `SKILL.md` into the user skill folders.
 
 ### `internal/tui`
 
