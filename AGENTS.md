@@ -48,6 +48,7 @@ When a requested change requires user-facing documentation updates, update `READ
 - `README.md`: user-facing installation, running, shortcuts, and demo notes.
 - `go.mod` / `go.sum`: Go module and dependency lock files.
 - `.gitignore`: ignored local/build artifacts.
+- `.agents/skills/easycat/SKILL.md`: procedure an agent follows to run the CLI.
 
 ### `internal/app`
 

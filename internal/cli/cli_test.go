@@ -218,6 +218,45 @@ exit 1
 	}
 }
 
+func TestSkillMatchesCommandHelp(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".agents", "skills", "easycat", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill := string(raw)
+	for _, part := range []string{"name: easycat", "logcat", "ADB", "Android device", "/easycat"} {
+		if !strings.Contains(skill, part) {
+			t.Fatalf("skill missing %q", part)
+		}
+	}
+
+	client := core.Client{Path: "adb"}
+	ctx := context.Background()
+	checks := []struct {
+		line string
+		args []string
+	}{
+		{"easycat devices\n", []string{"--help"}},
+		{"easycat devices\n", []string{"devices", "--help"}},
+		{"easycat devices info --serial SERIAL", []string{"devices", "--help"}},
+		{"easycat apps --serial SERIAL [--query TEXT]", []string{"apps", "--help"}},
+		{"easycat apps info --serial SERIAL --package NAME", []string{"apps", "--help"}},
+		{"easycat logs --serial SERIAL --package NAME [--level E|W|I|D] [--text TEXT] [--pid-only]", []string{"logs", "--help"}},
+	}
+	for _, check := range checks {
+		if !strings.Contains(skill, strings.TrimRight(check.line, "\n")) {
+			t.Fatalf("skill missing %q", check.line)
+		}
+		var stderr bytes.Buffer
+		if err := execute(ctx, check.args, client, &bytes.Buffer{}, &stderr); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stderr.String(), strings.TrimRight(check.line, "\n")) {
+			t.Fatalf("help %v missing %q\n%s", check.args, check.line, stderr.String())
+		}
+	}
+}
+
 func ioDiscard() *bytes.Buffer {
 	return &bytes.Buffer{}
 }
