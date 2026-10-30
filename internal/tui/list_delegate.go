@@ -8,9 +8,21 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/c1r5/easycat/internal/core"
 )
 
-type compactDelegate struct{}
+type listKind int
+
+const (
+	kindDevices listKind = iota
+	kindApps
+)
+
+type compactDelegate struct {
+	kind  listKind
+	model *model
+}
 
 func (d compactDelegate) Height() int  { return 1 }
 func (d compactDelegate) Spacing() int { return 0 }
@@ -26,10 +38,18 @@ func (d compactDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	}
 
 	cursor := "  "
-	style := compactItemStyle
+	style := compactIdleStyle
 	if index == m.Index() {
 		cursor = "> "
-		style = compactSelectedItemStyle
+		known, open := d.itemState(item)
+		switch {
+		case known && open:
+			style = compactOpenStyle
+		case known:
+			style = compactClosedStyle
+		default:
+			style = compactIdleStyle
+		}
 	}
 
 	width := m.Width() - 2
@@ -40,10 +60,38 @@ func (d compactDelegate) Render(w io.Writer, m list.Model, index int, item list.
 	fmt.Fprint(w, style.Render(cursor+title))
 }
 
+func (d compactDelegate) itemState(item list.Item) (known bool, open bool) {
+	if d.model == nil {
+		return false, false
+	}
+	switch d.kind {
+	case kindDevices:
+		device, ok := item.(core.Device)
+		if !ok {
+			return false, false
+		}
+		return true, device.State == "device"
+	case kindApps:
+		app, ok := item.(core.App)
+		if !ok || d.model.selectedApp == nil || app.Name != d.model.selectedApp.Name || !d.model.appStateKnown {
+			return false, false
+		}
+		return true, d.model.appRunning
+	default:
+		return false, false
+	}
+}
+
 var (
-	compactItemStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-	compactSelectedItemStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("39")).
-					Bold(true)
+	compactIdleStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("4"))
+	compactOpenStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("2")).
+				Bold(true)
+	compactClosedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("1")).
+				Bold(true)
+	compactCursorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("4")).
+				Bold(true)
 )

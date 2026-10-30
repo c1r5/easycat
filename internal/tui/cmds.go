@@ -9,9 +9,12 @@ import (
 	"github.com/c1r5/easycat/internal/core"
 )
 
-type devicesLoadedMsg struct {
+type devicePollMsg struct {
 	devices []core.Device
 	err     error
+	appName string
+	checked bool
+	pid     string
 }
 
 type appsLoadedMsg struct {
@@ -45,10 +48,39 @@ type busReadMsg struct {
 	follow    core.Event
 }
 
-func (m *model) loadDevicesCmd() tea.Cmd {
+const devicePollEvery = 5 * time.Second
+
+func (m *model) pollDevicesCmd(wait time.Duration) tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	serial, name := "", ""
+	if m.selectedDevice != nil && m.selectedApp != nil && m.selectedDevice.State == "device" {
+		serial = m.selectedDevice.Serial
+		name = m.selectedApp.Name
+	}
 	return func() tea.Msg {
-		devices, err := m.client.ListDevices(m.ctx)
-		return devicesLoadedMsg{devices: devices, err: err}
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		devices, err := client.ListDevices(ctx)
+		msg := devicePollMsg{devices: devices, err: err, appName: name}
+		if name != "" {
+			msg.checked = true
+			pid, pidErr := client.PID(ctx, serial, name)
+			if pidErr == nil {
+				msg.pid = pid
+			}
+		}
+		return msg
 	}
 }
 

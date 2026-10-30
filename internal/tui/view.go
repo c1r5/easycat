@@ -117,7 +117,7 @@ func (m *model) filterRow(field filterField, label, value string) string {
 	style := lipgloss.NewStyle()
 	if m.focus == focusFilters && m.filterField == field {
 		cursor = "> "
-		style = compactSelectedItemStyle
+		style = compactCursorStyle
 	}
 	return style.Render(cursor + label + ": " + value)
 }
@@ -136,7 +136,7 @@ func (m *model) footerView(width, height int) string {
 		"/: filter",
 		m.levelShortcut(),
 		m.pidShortcut(),
-		"ctrl+r: refresh",
+		"ctrl+r: reload",
 		"ctrl+k: clear",
 		m.pauseShortcut(),
 		"ctrl+q: quit",

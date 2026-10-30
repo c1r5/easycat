@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/c1r5/easycat/internal/core"
 )
@@ -315,5 +318,123 @@ exit 1
 	}
 	if m.stream != nil {
 		t.Fatal("stream remained after logcat exited")
+	}
+}
+
+func TestDeviceRefreshAndLogReload(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adb")
+	body := []byte(`#!/bin/sh
+if [ "$1" = "devices" ]; then
+  printf '%s\n' "List of devices attached" "emulator-5554 device product:sdk model:Pixel_7"
+  exit 0
+fi
+if [ "$1" = "-s" ] && [ "$4" = "pidof" ] && [ "$5" = "com.example" ]; then
+  echo 77
+  exit 0
+fi
+exit 1
+`)
+	if err := os.WriteFile(script, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(context.Background(), core.Client{Path: script}).(*model)
+	polled, ok := m.Init()().(devicePollMsg)
+	if !ok || polled.err != nil || len(polled.devices) != 1 || polled.devices[0].Serial != "emulator-5554" {
+		t.Fatalf("poll = %+v ok=%v", polled, ok)
+	}
+	if devicePollEvery.Seconds() != 5 {
+		t.Fatalf("poll interval = %s", devicePollEvery)
+	}
+	updated, cmd := m.Update(polled)
+	m = updated.(*model)
+	if cmd == nil {
+		t.Fatal("expected the next device poll")
+	}
+	if item, ok := m.devices.SelectedItem().(core.Device); !ok || item.Serial != "emulator-5554" {
+		t.Fatalf("device list = %+v", item)
+	}
+
+	m.focus = focusDevices
+	status := m.status
+	updated, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(*model)
+	if m.status != status {
+		t.Fatalf("devices r changed status to %q", m.status)
+	}
+
+	m.focus = focusApps
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(*model)
+	if m.appQuery != "r" || cmd != nil {
+		t.Fatalf("apps r: query=%q cmd=%v", m.appQuery, cmd != nil)
+	}
+
+	m.focus = focusLogcat
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(*model)
+	if cmd != nil || m.status != "no log stream to reload" {
+		t.Fatalf("reload without app: status=%q cmd=%v", m.status, cmd != nil)
+	}
+
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
+	m.buffer.Add(core.LogLine{Raw: "old"})
+	before := m.streamID
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(*model)
+	if cmd == nil || m.status != "reloading logcat..." || m.streamID != before+2 {
+		t.Fatalf("reload: status=%q streamID=%d before=%d cmd=%v", m.status, m.streamID, before, cmd != nil)
+	}
+	if got := m.buffer.Lines(); len(got) != 0 {
+		t.Fatalf("reload kept lines: %+v", got)
+	}
+
+	m.width = 120
+	m.height = 40
+	m.resize()
+	view := m.View()
+	if strings.Contains(view, "r: devices") || !strings.Contains(view, "ctrl+r: reload") || strings.Contains(view, "ctrl+r: refresh") {
+		t.Fatalf("footer = %q", stripANSI(view))
+	}
+
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
+	m.appStateKnown = true
+	m.appRunning = false
+	m.appPID = ""
+	before = m.streamID
+	updated, _ = m.Update(devicePollMsg{
+		devices: []core.Device{{Serial: "emulator-5554", State: "device", Model: "Pixel_7"}},
+		appName: "com.example",
+		checked: true,
+		pid:     "77",
+	})
+	m = updated.(*model)
+	if m.status != "reloading logcat..." || m.streamID != before+2 || !m.appRunning || m.appPID != "77" {
+		t.Fatalf("reopen: status=%q streamID=%d before=%d running=%v pid=%s", m.status, m.streamID, before, m.appRunning, m.appPID)
+	}
+
+	lipgloss.SetColorProfile(termenv.ANSI)
+	m.apps.SetSize(40, 5)
+	m.apps.SetItems([]list.Item{core.App{Name: "com.example"}, core.App{Name: "com.other"}})
+	m.apps.Select(0)
+	delegate := compactDelegate{kind: kindApps, model: m}
+	var buf bytes.Buffer
+	delegate.Render(&buf, m.apps, 0, core.App{Name: "com.example"})
+	if !strings.Contains(buf.String(), "> ") || !strings.Contains(buf.String(), "32m") {
+		t.Fatalf("open marker = %q", buf.String())
+	}
+	buf.Reset()
+	m.appRunning = false
+	delegate.Render(&buf, m.apps, 0, core.App{Name: "com.example"})
+	if !strings.Contains(buf.String(), "> ") || !strings.Contains(buf.String(), "31m") {
+		t.Fatalf("closed marker = %q", buf.String())
+	}
+	buf.Reset()
+	delegate.Render(&buf, m.apps, 1, core.App{Name: "com.other"})
+	if strings.Contains(buf.String(), ">") || !strings.Contains(buf.String(), "34m") {
+		t.Fatalf("idle marker = %q", buf.String())
 	}
 }
