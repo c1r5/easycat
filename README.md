@@ -7,9 +7,6 @@ It helps you:
 - list connected Android devices
 - list installed packages for the selected device
 - stream `logcat` in real time
-- detect common Android error patterns while logs are streaming
-- write incident reports with surrounding context
-- expose the current context through an embedded read-only MCP server
 - filter apps by typing in the Apps panel
 - filter logs by text, level, and selected app PID
 - navigate filters from the keyboard
@@ -70,13 +67,9 @@ Run the built binary:
 ./bin/easycat
 ```
 
-When a device and app are selected, `easycat` starts streaming logcat and
-captures only lines from the resolved app PID. It observes captured lines
-asynchronously and writes detected incidents to:
-
-```sh
-.easycat/incidents/
-```
+When a device and app are selected, `easycat` starts streaming logcat. If the
+app PID resolves, capture keeps lines from that PID. Turning PID only off
+stops capture and clears the lines already on screen.
 
 Development mode with hot reload:
 
@@ -90,61 +83,6 @@ make dev
 cargo install cargo-watch
 ```
 
-## Incidents and Rules
-
-If `.easycat/rules.yaml` is missing, `easycat` uses built-in rules for common
-Android failures, including fatal exceptions, `NullPointerException`, SQLite
-database locks, and ANR messages.
-
-Create `.easycat/rules.yaml` to customize detection:
-
-```yaml
-rules:
-  - id: fatal_exception
-    description: Android fatal exception
-    match:
-      level: E
-      contains:
-        - "FATAL EXCEPTION"
-    threshold:
-      count: 1
-      window: 30s
-      cooldown: 5m
-    action:
-      type: write_incident
-```
-
-Matching supports:
-
-- `contains`: case-insensitive match against the raw log/message
-- `level`: exact log level such as `E`, `W`, `I`, or `D`
-- `pid`: optional exact PID match
-- `threshold.count`, `threshold.window`, and `threshold.cooldown`
-
-Incident Markdown files include device/app/PID metadata, the trigger line,
-matching logs, recent context logs, and a suggested prompt for read-only
-analysis.
-
-## Embedded MCP
-
-The MCP server starts enabled by default inside the TUI:
-
-```text
-127.0.0.1:8765/mcp
-```
-
-Use `ctrl+s` to toggle MCP on or off. The server is read-only and exposes:
-
-- `get_active_context`
-- `get_recent_logs`
-- `list_incidents`
-- `get_incident`
-
-If the port is already in use, the TUI keeps running and reports the MCP error
-in the footer/status line.
-
-Turning `PID only` off suspends capture and clears recent logs from both the
-TUI and MCP. Previously created incidents remain available for the session.
 If the selected app PID cannot be resolved, no logs are captured.
 
 ## Shortcuts
@@ -164,7 +102,6 @@ If the selected app PID cannot be resolved, no logs are captured.
 | `g` / `G` | Go to top / bottom while Logcat is focused |
 | `ctrl+l` | Cycle log level filter: all, `E`, `W`, `I`, `D` |
 | `ctrl+o` | Toggle selected app PID-only capture; turning it off clears recent logs |
-| `ctrl+s` | Toggle the embedded MCP server |
 | `ctrl+r` | Refresh devices |
 | `ctrl+k` | Clear logs |
 | `ctrl+p` | Pause / resume rendering |

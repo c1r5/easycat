@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/c1r5/easycat/internal/core"
 	"github.com/c1r5/easycat/internal/domain"
 )
 
@@ -60,8 +61,6 @@ func (c Client) PIDOf(ctx context.Context, serial, packageName string) (string, 
 }
 
 type Stream struct {
-	Lines  <-chan domain.LogLine
-	Done   <-chan error
 	cancel context.CancelFunc
 }
 
@@ -71,7 +70,7 @@ func (s *Stream) Stop() {
 	}
 }
 
-func (c Client) StartLogcat(ctx context.Context, serial string) (*Stream, error) {
+func (c Client) StartLogcat(ctx context.Context, serial string, bus *core.Bus, streamID int) (*Stream, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(streamCtx, c.Path, c.logcatArgs(serial)...)
 	stdout, err := cmd.StdoutPipe()
@@ -89,28 +88,34 @@ func (c Client) StartLogcat(ctx context.Context, serial string) (*Stream, error)
 		return nil, err
 	}
 
-	lines := make(chan domain.LogLine, 256)
-	done := make(chan error, 1)
 	go func() {
-		defer close(lines)
+		var stopErr error
+		defer func() {
+			if bus != nil {
+				bus.Publish(core.Event{Kind: core.KindStreamStopped, StreamID: streamID, Err: stopErr})
+			}
+		}()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
-			select {
-			case lines <- domain.ParseLogLine(scanner.Text()):
-			case <-streamCtx.Done():
-				done <- nil
+			if streamCtx.Err() != nil {
 				return
+			}
+			if bus != nil {
+				bus.Publish(core.Event{
+					Kind:     core.KindLog,
+					StreamID: streamID,
+					Line:     domain.ParseLogLine(scanner.Text()),
+				})
 			}
 		}
 		scanErr := scanner.Err()
 		waitErr := cmd.Wait()
 		if errors.Is(streamCtx.Err(), context.Canceled) {
-			done <- nil
 			return
 		}
 		if scanErr != nil {
-			done <- scanErr
+			stopErr = scanErr
 			return
 		}
 		if waitErr != nil {
@@ -120,16 +125,14 @@ func (c Client) StartLogcat(ctx context.Context, serial string) (*Stream, error)
 				errText += errScanner.Text() + "\n"
 			}
 			if strings.TrimSpace(errText) != "" {
-				done <- errors.New(strings.TrimSpace(errText))
+				stopErr = errors.New(strings.TrimSpace(errText))
 				return
 			}
-			done <- waitErr
-			return
+			stopErr = waitErr
 		}
-		done <- nil
 	}()
 
-	return &Stream{Lines: lines, Done: done, cancel: cancel}, nil
+	return &Stream{cancel: cancel}, nil
 }
 
 func (c Client) logcatArgs(serial string) []string {
