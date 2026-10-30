@@ -236,7 +236,7 @@ func TestInstallSkillWritesEmbeddedMarkdown(t *testing.T) {
 		{"easycat devices info --serial SERIAL", []string{"devices", "--help"}},
 		{"easycat apps --serial SERIAL [--query TEXT]", []string{"apps", "--help"}},
 		{"easycat apps info --serial SERIAL --package NAME", []string{"apps", "--help"}},
-		{"easycat logs --serial SERIAL --package NAME [--level E|W|I|D] [--text TEXT] [--pid-only] [--lines N] [--from TIME] [--until TIME] [-f]", []string{"logs", "--help"}},
+		{"easycat logs --serial SERIAL [--package NAME] [--level E|W|I|D] [--text TEXT] [--pid-only] [--lines N] [--from TIME] [--until TIME] [-f]", []string{"logs", "--help"}},
 		{"easycat install-skill", []string{"install-skill", "--help"}},
 	}
 	for _, check := range checks {
