@@ -6,32 +6,33 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/c1r5/easycat/internal/adb"
-	"github.com/c1r5/easycat/internal/domain"
-	"github.com/c1r5/easycat/internal/observer"
+	"github.com/c1r5/easycat/internal/core"
 )
 
-type devicesLoadedMsg struct {
-	devices []domain.Device
+type devicePollMsg struct {
+	devices []core.Device
 	err     error
+	appName string
+	checked bool
+	pid     string
 }
 
 type appsLoadedMsg struct {
-	apps []domain.Package
+	apps []core.App
 	err  error
 }
 
 type streamStartedMsg struct {
-	stream   *adb.Stream
+	stream   *core.Stream
 	streamID int
 	pid      string
 	err      error
 }
 
 type logBatchMsg struct {
-	stream   *adb.Stream
+	stream   *core.Stream
 	streamID int
-	lines    []domain.LogLine
+	lines    []core.LogLine
 }
 
 type streamDoneMsg struct {
@@ -39,28 +40,53 @@ type streamDoneMsg struct {
 	err      error
 }
 
-type observerEventMsg struct {
-	event observer.Event
+type busReadMsg struct {
+	lines     []core.LogLine
+	streamID  int
+	hasLines  bool
+	hasFollow bool
+	follow    core.Event
 }
 
-type mcpStartedMsg struct {
-	err error
-}
+const devicePollEvery = 5 * time.Second
 
-type mcpStoppedMsg struct {
-	err error
-}
-
-func (m *model) loadDevicesCmd() tea.Cmd {
+func (m *model) pollDevicesCmd(wait time.Duration) tea.Cmd {
+	ctx := m.ctx
+	client := m.client
+	serial, name := "", ""
+	if m.selectedDevice != nil && m.selectedApp != nil && m.selectedDevice.State == "device" {
+		serial = m.selectedDevice.Serial
+		name = m.selectedApp.Name
+	}
 	return func() tea.Msg {
-		devices, err := m.client.ListDevices(m.ctx)
-		return devicesLoadedMsg{devices: devices, err: err}
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		devices, err := client.ListDevices(ctx)
+		msg := devicePollMsg{devices: devices, err: err, appName: name}
+		if name != "" {
+			msg.checked = true
+			pid, pidErr := client.PID(ctx, serial, name)
+			if pidErr == nil {
+				msg.pid = pid
+			}
+		}
+		return msg
 	}
 }
 
 func (m *model) loadAppsCmd(serial string) tea.Cmd {
 	return func() tea.Msg {
-		apps, err := m.client.ListPackages(m.ctx, serial)
+		apps, err := m.client.ListApps(m.ctx, serial)
 		return appsLoadedMsg{apps: apps, err: err}
 	}
 }
@@ -69,70 +95,55 @@ func (m *model) startStreamCmd(serial, packageName string, streamID int) tea.Cmd
 	return func() tea.Msg {
 		pidCtx, cancel := context.WithTimeout(m.ctx, adbPIDTimeout)
 		defer cancel()
-		pid, _ := m.client.PIDOf(pidCtx, serial, packageName)
-		stream, err := m.client.StartLogcat(m.ctx, serial)
+		pid, _ := m.client.PID(pidCtx, serial, packageName)
+		stream, err := m.client.StartLogcat(m.ctx, serial, m.bus, streamID)
 		return streamStartedMsg{stream: stream, streamID: streamID, pid: pid, err: err}
 	}
 }
 
-func waitLogBatchCmd(stream *adb.Stream, streamID int) tea.Cmd {
+func (m *model) waitBusCmd() tea.Cmd {
+	events := m.events
 	return func() tea.Msg {
-		if stream == nil {
+		if events == nil {
 			return nil
 		}
-		line, ok := <-stream.Lines
+		ev, ok := <-events
 		if !ok {
 			return nil
 		}
+		if ev.Kind != core.KindLog {
+			return busReadMsg{hasFollow: true, follow: ev}
+		}
 
-		lines := []domain.LogLine{line}
+		lines := []core.LogLine{ev.Line}
 		timer := time.NewTimer(logBatchWindow)
 		defer timer.Stop()
 
 		// Logcat can emit large bursts. Sending one Bubble Tea message per line
 		// makes the whole model rebuild the viewport content for every line and
-		// can starve regular key/layout updates. This mirrors lazydocker's
-		// "tainted view + periodic redraw" principle while staying in Bubble Tea:
-		// wait for one line, gather the short burst around it, then repaint once.
+		// can starve regular key/layout updates. Wait for one line, gather the
+		// short burst around it, then repaint once.
 		for len(lines) < logBatchMaxLines {
 			select {
-			case line, ok := <-stream.Lines:
+			case next, ok := <-events:
 				if !ok {
-					return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
+					return busReadMsg{lines: lines, streamID: ev.StreamID, hasLines: true}
 				}
-				lines = append(lines, line)
+				if next.Kind == core.KindLog && next.StreamID == ev.StreamID {
+					lines = append(lines, next.Line)
+					continue
+				}
+				return busReadMsg{
+					lines:     lines,
+					streamID:  ev.StreamID,
+					hasLines:  true,
+					hasFollow: true,
+					follow:    next,
+				}
 			case <-timer.C:
-				return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
+				return busReadMsg{lines: lines, streamID: ev.StreamID, hasLines: true}
 			}
 		}
-
-		return logBatchMsg{stream: stream, streamID: streamID, lines: lines}
-	}
-}
-
-func waitStreamDoneCmd(stream *adb.Stream, streamID int) tea.Cmd {
-	return func() tea.Msg {
-		if stream == nil {
-			return nil
-		}
-		err, ok := <-stream.Done
-		if !ok {
-			return streamDoneMsg{streamID: streamID}
-		}
-		return streamDoneMsg{streamID: streamID, err: err}
-	}
-}
-
-func waitObserverEventCmd(ctx context.Context, obs *observer.Observer) tea.Cmd {
-	return func() tea.Msg {
-		if obs == nil {
-			return nil
-		}
-		select {
-		case event := <-obs.Events():
-			return observerEventMsg{event: event}
-		case <-ctx.Done():
-			return nil
-		}
+		return busReadMsg{lines: lines, streamID: ev.StreamID, hasLines: true}
 	}
 }

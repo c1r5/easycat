@@ -1,23 +1,23 @@
 package tui
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
-	"github.com/c1r5/easycat/internal/adb"
-	"github.com/c1r5/easycat/internal/domain"
-	"github.com/c1r5/easycat/internal/incidents"
-	"github.com/c1r5/easycat/internal/observer"
-	"github.com/c1r5/easycat/internal/rules"
+	"github.com/c1r5/easycat/internal/core"
 )
 
 func TestRenderLogLineWrapped(t *testing.T) {
-	line := domain.LogLine{
+	line := core.LogLine{
 		Level:   "E",
 		Tag:     "App",
 		Message: strings.Repeat("payload", 8),
@@ -36,8 +36,8 @@ func TestRenderLogLineWrapped(t *testing.T) {
 }
 
 func TestSelectDeviceFocusesApps(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	device := domain.Device{Serial: "emulator-5554", State: "device"}
+	m := New(context.Background(), core.NewClient()).(*model)
+	device := core.Device{Serial: "emulator-5554", State: "device"}
 	m.devices.SetItems([]list.Item{device})
 	m.focus = focusDevices
 
@@ -51,15 +51,15 @@ func TestSelectDeviceFocusesApps(t *testing.T) {
 }
 
 func TestLogBatchIgnoresStaleStream(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	currentStream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	currentStream := &core.Stream{}
 	m.stream = currentStream
 	m.streamID = 2
 
 	updated, _ := m.Update(logBatchMsg{
-		stream:   &adb.Stream{},
+		stream:   &core.Stream{},
 		streamID: 1,
-		lines:    []domain.LogLine{{Raw: "stale"}},
+		lines:    []core.LogLine{{Raw: "stale"}},
 	})
 	m = updated.(*model)
 
@@ -69,13 +69,13 @@ func TestLogBatchIgnoresStaleStream(t *testing.T) {
 }
 
 func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	stream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	stream := &core.Stream{}
 	m.stream = stream
 	m.streamID = 1
 	m.paused = true
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
 	m.width = 80
@@ -86,7 +86,7 @@ func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
 	updated, _ := m.Update(logBatchMsg{
 		stream:   stream,
 		streamID: 1,
-		lines:    []domain.LogLine{{PID: "1234", Raw: "new"}},
+		lines:    []core.LogLine{{PID: "1234", Raw: "new"}},
 	})
 	m = updated.(*model)
 
@@ -99,22 +99,19 @@ func TestLogBatchBuffersWhilePausedWithoutRendering(t *testing.T) {
 }
 
 func TestLogBatchDropsLinesWhenPIDOnlyDisabled(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	stream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	stream := &core.Stream{}
 	m.stream = stream
 	m.streamID = 1
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = false
-	m.observer.Reset(observer.Context{Device: *m.selectedDevice, Package: m.selectedApp.Name, PID: m.filters.PID})
-	m.observer.Start(context.Background())
-	t.Cleanup(m.observer.Stop)
 
 	updated, _ := m.Update(logBatchMsg{
 		stream:   stream,
 		streamID: 1,
-		lines: []domain.LogLine{
+		lines: []core.LogLine{
 			{PID: "1234", Raw: "app log"},
 			{PID: "9999", Raw: "system log"},
 		},
@@ -124,26 +121,22 @@ func TestLogBatchDropsLinesWhenPIDOnlyDisabled(t *testing.T) {
 	if got := m.buffer.Lines(); len(got) != 0 {
 		t.Fatalf("captured lines with PID only disabled: %+v", got)
 	}
-	assertObserverLogsStayEmpty(t, m.observer)
 }
 
 func TestLogBatchCapturesOnlySelectedPID(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	stream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	stream := &core.Stream{}
 	m.stream = stream
 	m.streamID = 1
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
-	m.observer.Reset(observer.Context{Device: *m.selectedDevice, Package: m.selectedApp.Name, PID: m.filters.PID})
-	m.observer.Start(context.Background())
-	t.Cleanup(m.observer.Stop)
 
 	updated, _ := m.Update(logBatchMsg{
 		stream:   stream,
 		streamID: 1,
-		lines: []domain.LogLine{
+		lines: []core.LogLine{
 			{PID: "9999", Raw: "system log"},
 			{PID: "1234", Raw: "app log"},
 		},
@@ -154,47 +147,15 @@ func TestLogBatchCapturesOnlySelectedPID(t *testing.T) {
 	if len(got) != 1 || got[0].PID != "1234" {
 		t.Fatalf("captured lines = %+v, want only PID 1234", got)
 	}
-	observerLogs := waitForObserverLogCount(t, m.observer, 1)
-	if observerLogs[0].PID != "1234" {
-		t.Fatalf("observer received PID %q, want 1234", observerLogs[0].PID)
-	}
 }
 
-func TestDisablingPIDOnlyClearsCaptureButPreservesIncidents(t *testing.T) {
-	obs, err := observer.New(observer.Options{
-		Rules: []rules.Rule{{
-			ID:        "fatal",
-			Match:     rules.MatchConfig{Level: "E", Contains: []string{"fatal test"}},
-			Threshold: rules.ThresholdConfig{Count: 1, Window: time.Minute, Cooldown: time.Minute},
-			Action:    rules.ActionConfig{Type: "write_incident"},
-		}},
-		Store: incidents.NewStore(t.TempDir()),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	m := New(context.Background(), adb.NewClient()).(*model)
-	m.observer = obs
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.example"}
+func TestDisablingPIDOnlyClearsCapture(t *testing.T) {
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
-	m.buffer.Add(domain.LogLine{PID: "1234", Raw: "captured"})
-	obs.Reset(observer.Context{Device: *m.selectedDevice, Package: m.selectedApp.Name, PID: m.filters.PID})
-	obs.Start(context.Background())
-	t.Cleanup(obs.Stop)
-	if !obs.Publish(domain.LogLine{Level: "E", PID: "1234", Raw: "fatal test"}) {
-		t.Fatal("failed to publish test incident line")
-	}
-	select {
-	case event := <-obs.Events():
-		if event.Err != nil {
-			t.Fatal(event.Err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for incident")
-	}
+	m.buffer.Add(core.LogLine{PID: "1234", Raw: "captured"})
 
 	updated, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(*model)
@@ -205,61 +166,41 @@ func TestDisablingPIDOnlyClearsCaptureButPreservesIncidents(t *testing.T) {
 	if got := m.buffer.Lines(); len(got) != 0 {
 		t.Fatalf("buffer was not cleared: %+v", got)
 	}
-	snapshot := obs.Snapshot()
-	if len(snapshot.Logs) != 0 {
-		t.Fatalf("observer logs were not cleared: %+v", snapshot.Logs)
-	}
-	if len(snapshot.Incidents) != 1 {
-		t.Fatalf("incidents = %d, want preserved incident", len(snapshot.Incidents))
-	}
 }
 
-func TestSelectingAppClearsPreviousObserverLogsWhileResolvingPID(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	m.selectedDevice = &domain.Device{Serial: "emulator-5554", State: "device"}
-	m.selectedApp = &domain.Package{Name: "com.old"}
+func TestSelectingAppClearsBufferWhileResolvingPID(t *testing.T) {
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.old"}
 	m.filters.PID = "1234"
 	m.filters.PIDOnly = true
 	m.focus = focusApps
-	m.apps.SetItems([]list.Item{domain.Package{Name: "com.new"}})
-	m.observer.Reset(observer.Context{Device: *m.selectedDevice, Package: m.selectedApp.Name, PID: m.filters.PID})
-	m.observer.Start(context.Background())
-	if !m.observer.Publish(domain.LogLine{PID: "1234", Raw: "old app log"}) {
-		t.Fatal("failed to publish old app log")
-	}
-	waitForObserverLogCount(t, m.observer, 1)
+	m.buffer.Add(core.LogLine{PID: "1234", Raw: "old app log"})
+	m.apps.SetItems([]list.Item{core.App{Name: "com.new"}})
 
 	_, cmd := m.selectFocused()
 	if cmd == nil {
 		t.Fatal("expected stream start command")
 	}
-	if m.filters.PIDOnly {
-		t.Fatal("PID only remained enabled while resolving the new PID")
+	if m.selectedApp == nil || m.selectedApp.Name != "com.new" {
+		t.Fatalf("selected app = %+v, want com.new", m.selectedApp)
 	}
-	snapshot := m.observer.Snapshot()
-	if snapshot.Context.Package != "com.new" || snapshot.Context.PID != "" {
-		t.Fatalf("observer context = %+v, want new package without PID", snapshot.Context)
+	if m.filters.PIDOnly || m.filters.PID != "" {
+		t.Fatalf("filters = %+v, want pid cleared while the new pid resolves", m.filters)
 	}
-	if len(snapshot.Logs) != 0 {
-		t.Fatalf("observer retained previous app logs: %+v", snapshot.Logs)
+	if got := m.buffer.Lines(); len(got) != 0 {
+		t.Fatalf("buffer retained previous app logs: %+v", got)
 	}
 }
 
 func TestActionShortcutsRequireCtrl(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	m.buffer.Add(domain.LogLine{Raw: "keep"})
-	m.mcpEnabled = true
+	m := New(context.Background(), core.NewClient()).(*model)
+	m.buffer.Add(core.LogLine{Raw: "keep"})
 
 	updated, _ := m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	m = updated.(*model)
 	if got := m.buffer.Lines(); len(got) != 1 || got[0].Raw != "keep" {
 		t.Fatalf("plain c cleared logs, got %+v", got)
-	}
-
-	updated, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
-	m = updated.(*model)
-	if !m.mcpEnabled {
-		t.Fatal("plain m toggled MCP")
 	}
 
 	updated, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlK})
@@ -270,8 +211,8 @@ func TestActionShortcutsRequireCtrl(t *testing.T) {
 }
 
 func TestStreamDoneIgnoresStaleStream(t *testing.T) {
-	m := New(context.Background(), adb.NewClient()).(*model)
-	currentStream := &adb.Stream{}
+	m := New(context.Background(), core.NewClient()).(*model)
+	currentStream := &core.Stream{}
 	m.stream = currentStream
 	m.streamID = 2
 	m.status = "streaming"
@@ -288,7 +229,7 @@ func TestStreamDoneIgnoresStaleStream(t *testing.T) {
 }
 
 func TestRenderLogLineSanitizesTerminalControls(t *testing.T) {
-	line := domain.LogLine{
+	line := core.LogLine{
 		Level:   "E",
 		Tag:     "App\x1b[31m",
 		Message: "bad\x07\r\ntext\x7f",
@@ -327,28 +268,173 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
-func waitForObserverLogCount(t *testing.T, obs *observer.Observer, want int) []domain.LogLine {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		logs := obs.Snapshot().Logs
-		if len(logs) == want {
-			return logs
-		}
-		time.Sleep(time.Millisecond)
+func TestLogcatLineReachesBufferThroughBus(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adb")
+	body := []byte(`#!/bin/sh
+if [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "pidof" ]; then
+  echo 1234
+  exit 0
+fi
+if [ "$1" = "-s" ] && [ "$3" = "logcat" ]; then
+  printf '%s\n' '01-01 00:00:00.000 1234 1 I Tag: hello' '01-01 00:00:00.001 9999 1 I Tag: other'
+  exit 0
+fi
+exit 1
+`)
+	if err := os.WriteFile(script, body, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	logs := obs.Snapshot().Logs
-	t.Fatalf("observer log count = %d, want %d", len(logs), want)
-	return nil
+
+	m := New(context.Background(), core.Client{Path: script}).(*model)
+	sub := m.bus.Subscribe()
+	t.Cleanup(sub.Cancel)
+	m.events = sub.Events
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
+	id := m.beginStream()
+	started, ok := m.startStreamCmd("emulator-5554", "com.example", id)().(streamStartedMsg)
+	if !ok {
+		t.Fatal("expected stream start message")
+	}
+	if started.err != nil {
+		t.Fatal(started.err)
+	}
+	if started.pid != "1234" {
+		t.Fatalf("pid = %q, want 1234", started.pid)
+	}
+
+	updated, cmd := m.Update(started)
+	m = updated.(*model)
+	if cmd == nil {
+		t.Fatal("expected bus wait")
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(*model)
+
+	got := m.buffer.Lines()
+	if len(got) != 1 || got[0].Message != "hello" || got[0].PID != "1234" {
+		t.Fatalf("buffer = %+v, want the selected pid line", got)
+	}
+	if m.stream != nil {
+		t.Fatal("stream remained after logcat exited")
+	}
 }
 
-func assertObserverLogsStayEmpty(t *testing.T, obs *observer.Observer) {
-	t.Helper()
-	deadline := time.Now().Add(25 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if logs := obs.Snapshot().Logs; len(logs) != 0 {
-			t.Fatalf("observer unexpectedly received logs: %+v", logs)
-		}
-		time.Sleep(time.Millisecond)
+func TestDeviceRefreshAndLogReload(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adb")
+	body := []byte(`#!/bin/sh
+if [ "$1" = "devices" ]; then
+  printf '%s\n' "List of devices attached" "emulator-5554 device product:sdk model:Pixel_7"
+  exit 0
+fi
+if [ "$1" = "-s" ] && [ "$4" = "pidof" ] && [ "$5" = "com.example" ]; then
+  echo 77
+  exit 0
+fi
+exit 1
+`)
+	if err := os.WriteFile(script, body, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(context.Background(), core.Client{Path: script}).(*model)
+	polled, ok := m.Init()().(devicePollMsg)
+	if !ok || polled.err != nil || len(polled.devices) != 1 || polled.devices[0].Serial != "emulator-5554" {
+		t.Fatalf("poll = %+v ok=%v", polled, ok)
+	}
+	if devicePollEvery.Seconds() != 5 {
+		t.Fatalf("poll interval = %s", devicePollEvery)
+	}
+	updated, cmd := m.Update(polled)
+	m = updated.(*model)
+	if cmd == nil {
+		t.Fatal("expected the next device poll")
+	}
+	if item, ok := m.devices.SelectedItem().(core.Device); !ok || item.Serial != "emulator-5554" {
+		t.Fatalf("device list = %+v", item)
+	}
+
+	m.focus = focusDevices
+	status := m.status
+	updated, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(*model)
+	if m.status != status {
+		t.Fatalf("devices r changed status to %q", m.status)
+	}
+
+	m.focus = focusApps
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(*model)
+	if m.appQuery != "r" || cmd != nil {
+		t.Fatalf("apps r: query=%q cmd=%v", m.appQuery, cmd != nil)
+	}
+
+	m.focus = focusLogcat
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(*model)
+	if cmd != nil || m.status != "no log stream to reload" {
+		t.Fatalf("reload without app: status=%q cmd=%v", m.status, cmd != nil)
+	}
+
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
+	m.buffer.Add(core.LogLine{Raw: "old"})
+	before := m.streamID
+	updated, cmd = m.updateKey(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updated.(*model)
+	if cmd == nil || m.status != "reloading logcat..." || m.streamID != before+2 {
+		t.Fatalf("reload: status=%q streamID=%d before=%d cmd=%v", m.status, m.streamID, before, cmd != nil)
+	}
+	if got := m.buffer.Lines(); len(got) != 0 {
+		t.Fatalf("reload kept lines: %+v", got)
+	}
+
+	m.width = 120
+	m.height = 40
+	m.resize()
+	view := m.View()
+	if strings.Contains(view, "r: devices") || !strings.Contains(view, "ctrl+r: reload") || strings.Contains(view, "ctrl+r: refresh") {
+		t.Fatalf("footer = %q", stripANSI(view))
+	}
+
+	m.selectedDevice = &core.Device{Serial: "emulator-5554", State: "device"}
+	m.selectedApp = &core.App{Name: "com.example"}
+	m.appStateKnown = true
+	m.appRunning = false
+	m.appPID = ""
+	before = m.streamID
+	updated, _ = m.Update(devicePollMsg{
+		devices: []core.Device{{Serial: "emulator-5554", State: "device", Model: "Pixel_7"}},
+		appName: "com.example",
+		checked: true,
+		pid:     "77",
+	})
+	m = updated.(*model)
+	if m.status != "reloading logcat..." || m.streamID != before+2 || !m.appRunning || m.appPID != "77" {
+		t.Fatalf("reopen: status=%q streamID=%d before=%d running=%v pid=%s", m.status, m.streamID, before, m.appRunning, m.appPID)
+	}
+
+	lipgloss.SetColorProfile(termenv.ANSI)
+	m.apps.SetSize(40, 5)
+	m.apps.SetItems([]list.Item{core.App{Name: "com.example"}, core.App{Name: "com.other"}})
+	m.apps.Select(0)
+	delegate := compactDelegate{kind: kindApps, model: m}
+	var buf bytes.Buffer
+	delegate.Render(&buf, m.apps, 0, core.App{Name: "com.example"})
+	if !strings.Contains(buf.String(), "> ") || !strings.Contains(buf.String(), "32m") {
+		t.Fatalf("open marker = %q", buf.String())
+	}
+	buf.Reset()
+	m.appRunning = false
+	delegate.Render(&buf, m.apps, 0, core.App{Name: "com.example"})
+	if !strings.Contains(buf.String(), "> ") || !strings.Contains(buf.String(), "31m") {
+		t.Fatalf("closed marker = %q", buf.String())
+	}
+	buf.Reset()
+	delegate.Render(&buf, m.apps, 1, core.App{Name: "com.other"})
+	if strings.Contains(buf.String(), ">") || !strings.Contains(buf.String(), "34m") {
+		t.Fatalf("idle marker = %q", buf.String())
 	}
 }
